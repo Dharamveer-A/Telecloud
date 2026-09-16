@@ -35,10 +35,11 @@ function iconFor(mime: string) {
   return "📦";
 }
 
-function FolderTreeNode({ node, allFolders, currentPath, onSelect, depth = 0 }: { node: any, allFolders: any[], currentPath: Crumb[], onSelect: (node: any) => void, depth?: number }) {
+function FolderTreeNode({ node, allFolders, currentPath, onSelect, onDropToNode, depth = 0 }: { node: any, allFolders: any[], currentPath: Crumb[], onSelect: (node: any) => void, onDropToNode?: (e: React.DragEvent, node: any) => void, depth?: number }) {
   const children = allFolders.filter(f => f.parentId === node.id);
   const isOpen = currentPath.some(c => c.id === node.id) || depth === 0; // auto open if in path or root
   const [expanded, setExpanded] = useState(isOpen);
+  const [isDragOver, setIsDragOver] = useState(false);
   
   useEffect(() => {
     if (currentPath.some(c => c.id === node.id)) setExpanded(true);
@@ -47,8 +48,16 @@ function FolderTreeNode({ node, allFolders, currentPath, onSelect, depth = 0 }: 
   return (
     <div>
       <div 
-        className={`flex items-center group ${currentPath[currentPath.length - 1]?.id === node.id ? "bg-teal/20" : "hover:bg-surface"}`}
+        className={`flex items-center group transition-colors ${currentPath[currentPath.length - 1]?.id === node.id ? "bg-teal/20" : "hover:bg-surface"} ${isDragOver ? "bg-teal/30 ring-1 ring-inset ring-teal" : ""}`}
         style={{ paddingLeft: `${depth * 12}px` }}
+        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragOver(true); }}
+        onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragOver(false); }}
+        onDrop={(e) => { 
+          e.preventDefault(); 
+          e.stopPropagation(); 
+          setIsDragOver(false); 
+          if (onDropToNode) onDropToNode(e, node); 
+        }}
       >
         <button 
           onClick={() => setExpanded(!expanded)} 
@@ -68,7 +77,7 @@ function FolderTreeNode({ node, allFolders, currentPath, onSelect, depth = 0 }: 
       {expanded && children.length > 0 && (
         <div>
           {children.map(child => (
-            <FolderTreeNode key={child.id} node={child} allFolders={allFolders} currentPath={currentPath} onSelect={onSelect} depth={depth + 1} />
+            <FolderTreeNode key={child.id} node={child} allFolders={allFolders} currentPath={currentPath} onSelect={onSelect} onDropToNode={onDropToNode} depth={depth + 1} />
           ))}
         </div>
       )}
@@ -470,6 +479,7 @@ export default function Browser() {
                 node={rootNode} 
                 allFolders={allFolders} 
                 currentPath={path} 
+                onDropToNode={handleFolderDrop}
                 onSelect={(n) => {
                   // build path up to n
                   const newPath: Crumb[] = [];
