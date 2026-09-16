@@ -4,6 +4,7 @@ import { api, clearToken, saveBlob } from "../lib/api";
 import { itemsToTree, filesWithPathsToTree, DroppedNode, flattenFiles } from "../lib/dragDrop";
 import { ActiveFilter, CustomFilter, loadCustomFilters, saveCustomFilters, matchesBuiltin, matchesCustom } from "../lib/filters";
 import { transferStore } from "../lib/transfers";
+import { useSelection } from "../lib/useSelection";
 import PasswordPrompt from "../components/PasswordPrompt";
 import PreviewModal from "../components/PreviewModal";
 import Thumbnail from "../components/Thumbnail";
@@ -87,6 +88,7 @@ function FolderTreeNode({ node, allFolders, currentPath, onSelect, onDropToNode,
 
 export default function Browser() {
   const nav = useNavigate();
+  const { selectedIds, setSelectedIds, marquee, registerItem, handlePointerDown, handleItemClick } = useSelection();
   const [path, setPath] = useState<Crumb[]>([]);
   const [subfolders, setSubfolders] = useState<SubFolder[]>([]);
   const [files, setFiles] = useState<FileItem[]>([]);
@@ -573,7 +575,22 @@ export default function Browser() {
           {error && <span className="text-danger text-sm ml-4">{error}</span>}
         </div>
 
-        <main className="flex-1 px-6 py-5 overflow-y-auto">
+        <main 
+          className="flex-1 px-6 py-5 overflow-y-auto relative"
+          onPointerDown={handlePointerDown}
+        >
+        {marquee && (
+          <div
+            style={{
+              position: 'fixed',
+              left: Math.min(marquee.x1, marquee.x2),
+              top: Math.min(marquee.y1, marquee.y2),
+              width: Math.abs(marquee.x1 - marquee.x2),
+              height: Math.abs(marquee.y1 - marquee.y2),
+            }}
+            className="bg-teal/20 border border-teal pointer-events-none z-50"
+          />
+        )}
           {filteredFolders.length === 0 && filteredFiles.length === 0 && (
             <div className="text-dim text-sm py-12 text-center">
               {query || activeFilter ? "No matches." : "Empty. Drag files or folders in anywhere on this page, or use + New."}
@@ -586,12 +603,13 @@ export default function Browser() {
                 <div
                   key={f.id}
                   draggable
-                  onClick={() => openFolder(f.id, f.name, f.locked)}
+                  onClick={(e) => { if (!handleItemClick(e, f.id)) openFolder(f.id, f.name, f.locked); }}
                   onDragStart={(e) => handleInternalDragStart(e, { kind: "folder", id: f.id, name: f.name })}
                   onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDropTargetId(f.id); }}
                   onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setDropTargetId(null); }}
                   onDrop={(e) => handleFolderDrop(e, f)}
-                  className={`border rounded-lg px-3 py-3 flex flex-col items-start relative group cursor-pointer ${dropTargetId === f.id ? "bg-teal/20 border-teal" : "border-line bg-surface hover:border-teal"}`}
+                  ref={(el) => registerItem(f.id, el)}
+                  className={`selectable-item border rounded-lg px-3 py-3 flex flex-col items-start relative group cursor-pointer ${dropTargetId === f.id ? "bg-teal/20 border-teal" : selectedIds.has(f.id) ? "bg-teal/20 border-teal ring-1 ring-teal" : "border-line bg-surface hover:border-teal"}`}
                 >
                   <div className="text-2xl mb-3">{f.locked ? "🔒" : "📁"}</div>
                   <div className="text-xs truncate w-full pr-4">{f.name}</div>
@@ -611,9 +629,10 @@ export default function Browser() {
                   key={f.id}
                   draggable
                   onDragStart={(e) => handleInternalDragStart(e, { kind: "file", id: f.id, name: f.name })}
-                  className="border border-line rounded-lg overflow-hidden hover:border-teal bg-surface flex flex-col relative group"
+                  ref={(el) => registerItem(f.id, el)}
+                  className={`selectable-item border rounded-lg overflow-hidden flex flex-col relative group ${selectedIds.has(f.id) ? "bg-teal/20 border-teal ring-1 ring-teal" : "border-line bg-surface hover:border-teal"}`}
                 >
-                  <button onClick={() => setPreview(f)} className="text-left flex flex-col flex-1">
+                  <button onClick={(e) => { if (!handleItemClick(e, f.id)) setPreview(f); }} className="text-left flex flex-col flex-1">
                     <div className="h-24 bg-surface2 flex items-center justify-center text-2xl overflow-hidden">
                       <Thumbnail fileId={f.id} mimeType={f.mimeType} password={current ? passwords[current.id] : undefined} />
                       {!f.mimeType.startsWith("image/") && iconFor(f.mimeType)}
@@ -641,12 +660,13 @@ export default function Browser() {
                 <div
                   key={f.id}
                   draggable
-                  onClick={() => openFolder(f.id, f.name, f.locked)}
+                  onClick={(e) => { if (!handleItemClick(e, f.id)) openFolder(f.id, f.name, f.locked); }}
                   onDragStart={(e) => handleInternalDragStart(e, { kind: "folder", id: f.id, name: f.name })}
                   onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDropTargetId(f.id); }}
                   onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setDropTargetId(null); }}
                   onDrop={(e) => handleFolderDrop(e, f)}
-                  className={`flex items-center gap-3 px-4 py-3 border-b border-line cursor-pointer ${dropTargetId === f.id ? "bg-teal/20" : "hover:bg-surface"}`}
+                  ref={(el) => registerItem(f.id, el)}
+                  className={`selectable-item flex items-center gap-3 px-4 py-3 border-b border-line cursor-pointer ${dropTargetId === f.id ? "bg-teal/20" : selectedIds.has(f.id) ? "bg-teal/20" : "hover:bg-surface"}`}
                 >
                   <div className="flex items-center gap-3 text-left flex-1 min-w-0">
                     <span>{f.locked ? "🔒" : "📁"}</span>
@@ -667,9 +687,10 @@ export default function Browser() {
                   key={f.id}
                   draggable
                   onDragStart={(e) => handleInternalDragStart(e, { kind: "file", id: f.id, name: f.name })}
-                  className="flex items-center justify-between px-4 py-3 border-b border-line last:border-0 hover:bg-surface"
+                  ref={(el) => registerItem(f.id, el)}
+                  className={`selectable-item flex items-center justify-between px-4 py-3 border-b border-line last:border-0 ${selectedIds.has(f.id) ? "bg-teal/20" : "hover:bg-surface"}`}
                 >
-                  <button onClick={() => setPreview(f)} className="flex items-center gap-3 text-left flex-1 min-w-0">
+                  <button onClick={(e) => { if (!handleItemClick(e, f.id)) setPreview(f); }} className="flex items-center gap-3 text-left flex-1 min-w-0">
                     <span>{iconFor(f.mimeType)}</span>
                     <span className="truncate text-sm">{f.name}</span>
                   </button>
