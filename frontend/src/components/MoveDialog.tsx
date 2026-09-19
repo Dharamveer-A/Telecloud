@@ -7,11 +7,13 @@ interface SubFolder { id: string; name: string; locked: boolean }
 export default function MoveDialog({
   title,
   excludeFolderId,
+  excludeFolderIds,
   onCancel,
   onConfirm,
 }: {
   title: string;
   excludeFolderId?: string; // when moving a folder, hide itself so you can't pick it as its own destination
+  excludeFolderIds?: string[] | Set<string>;
   onCancel: () => void;
   onConfirm: (destFolderId: string) => void;
 }) {
@@ -19,12 +21,20 @@ export default function MoveDialog({
   const [subfolders, setSubfolders] = useState<SubFolder[]>([]);
   const [error, setError] = useState("");
 
+  const excludeSet = new Set<string>(
+    excludeFolderIds
+      ? Array.from(excludeFolderIds)
+      : excludeFolderId
+      ? [excludeFolderId]
+      : []
+  );
+
   async function open(id: string, name: string, slice: Crumb[]) {
     setError("");
     try {
       const res: any = await api.getFolder(id);
       if (res.locked) { setError("Can't navigate into a locked folder here."); return; }
-      setSubfolders(res.subfolders.filter((f: SubFolder) => f.id !== excludeFolderId));
+      setSubfolders(res.subfolders.filter((f: SubFolder) => !excludeSet.has(f.id)));
       setPath([...slice, { id, name }]);
     } catch (e: any) {
       setError(e.message);

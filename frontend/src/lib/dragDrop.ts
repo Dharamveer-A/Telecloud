@@ -10,6 +10,13 @@ export interface DroppedFolderNode {
 }
 export type DroppedNode = DroppedFileNode | DroppedFolderNode;
 
+export function isIgnoredFile(filename: string): boolean {
+  if (!filename) return false;
+  const lower = filename.toLowerCase();
+  const baseName = lower.split("/").pop() || lower;
+  return baseName === ".ds_store" || baseName.startsWith("._");
+}
+
 function readEntryFile(entry: any): Promise<File> {
   return new Promise((resolve, reject) => entry.file(resolve, reject));
 }
@@ -28,14 +35,16 @@ function readAllDirectoryEntries(reader: any): Promise<any[]> {
   });
 }
 
-async function entryToNode(entry: any): Promise<DroppedNode> {
+async function entryToNode(entry: any): Promise<DroppedNode | null> {
+  if (!entry || isIgnoredFile(entry.name)) return null;
   if (entry.isFile) {
     const file = await readEntryFile(entry);
     return { type: "file", name: entry.name, file };
   }
   const reader = entry.createReader();
   const entries = await readAllDirectoryEntries(reader);
-  const children = await Promise.all(entries.map(entryToNode));
+  const childrenNodes = await Promise.all(entries.map(entryToNode));
+  const children = childrenNodes.filter((c): c is DroppedNode => c !== null);
   return { type: "folder", name: entry.name, children };
 }
 
@@ -46,10 +55,15 @@ export async function itemsToTree(items: DataTransferItemList | null, fallbackFi
     const entries = Array.from(items)
       .map((i) => i.webkitGetAsEntry())
       .filter(Boolean) as any[];
-    if (entries.length) return Promise.all(entries.map(entryToNode));
+    if (entries.length) {
+      const nodes = await Promise.all(entries.map(entryToNode));
+      return nodes.filter((n): n is DroppedNode => n !== null);
+    }
   }
   if (fallbackFiles) {
-    return Array.from(fallbackFiles).map((f) => ({ type: "file", name: f.name, file: f } as DroppedFileNode));
+    return Array.from(fallbackFiles)
+      .filter((f) => !isIgnoredFile(f.name))
+      .map((f) => ({ type: "file", name: f.name, file: f } as DroppedFileNode));
   }
   return [];
 }
@@ -70,7 +84,10 @@ export function filesWithPathsToTree(fileList: FileList): DroppedNode[] {
   const rootMap: Record<string, Building | BuildingFolder> = {};
 
   for (const file of Array.from(fileList)) {
+    if (isIgnoredFile(file.name)) continue;
     const relPath = (file as any).webkitRelativePath || file.name;
+    if (isIgnoredFile(relPath)) continue;
+
     const parts = relPath.split("/").filter(Boolean);
     let map = rootMap;
     for (let i = 0; i < parts.length - 1; i++) {
@@ -83,6 +100,7 @@ export function filesWithPathsToTree(fileList: FileList): DroppedNode[] {
       map = existing.childrenMap;
     }
     const filename = parts[parts.length - 1];
+    if (isIgnoredFile(filename)) continue;
     map[filename] = { type: "file", name: filename, file };
   }
 
@@ -100,6 +118,7 @@ export function flattenFiles(tree: DroppedNode[], prefix: string[] = []): FlatFi
   const out: FlatFileEntry[] = [];
   for (const node of tree) {
     if (node.type === "file") {
+      if (isIgnoredFile(node.name)) continue;
       out.push({
         key: [...prefix, node.name].join("/") + Math.random().toString(36).slice(2),
         file: node.file,

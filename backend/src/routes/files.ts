@@ -1,10 +1,13 @@
 import { Router } from "express";
 import multer from "multer";
 import os from "os";
+import path from "path";
+import fs from "fs/promises";
 import { db } from "../db/db";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { getClientForUser } from "../telegram/client";
 import { uploadFile, downloadFile, streamFileRangeToResponse, streamFileToResponse } from "../telegram/fileService";
+import { inputPeerFor, getInputPeerForChatId } from "../telegram/storageManager";
 import { verifyFolderPassword, deriveFolderFileKey } from "../utils/crypto";
 
 const router = Router();
@@ -13,20 +16,45 @@ router.use(requireAuth);
 // We use diskStorage so large files (e.g. 5GB) don't crash Node by being fully loaded into RAM.
 const upload = multer({ dest: os.tmpdir() });
 
+const uploadProgress = new Map<string, number>();
 const progressEmitters = new Map<string, (progress: number) => void>();
 
 router.get("/upload-progress/:id", (req, res) => {
   const id = req.params.id;
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  
-  const listener = (progress: number) => {
-    res.write(`data: ${JSON.stringify({ progress })}\n\n`);
-  };
-  progressEmitters.set(id, listener);
-  req.on("close", () => progressEmitters.delete(id));
+  if (req.headers.accept?.includes("text/event-stream")) {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    
+    const listener = (progress: number) => {
+      res.write(`data: ${JSON.stringify({ progress })}\n\n`);
+    };
+    progressEmitters.set(id, listener);
+    req.on("close", () => progressEmitters.delete(id));
+    return;
+  }
+
+  res.json({ progress: uploadProgress.get(id) ?? 0 });
 });
+
+router.get("/search", async (req: AuthedRequest, res) => {
+  const userId = req.userId!;
+  const q = typeof req.query.q === "string" ? req.query.q : "";
+  const results = db.search(userId, q);
+  res.json(results);
+});
+
+function getUniqueFileName(existingNames: Set<string>, name: string): string {
+  if (!existingNames.has(name)) return name;
+  const lastDot = name.lastIndexOf(".");
+  const base = lastDot > 0 ? name.slice(0, lastDot) : name;
+  const ext = lastDot > 0 ? name.slice(lastDot) : "";
+  let counter = 1;
+  while (existingNames.has(`${base} (${counter})${ext}`)) {
+    counter++;
+  }
+  return `${base} (${counter})${ext}`;
+}
 
 router.post("/upload", upload.single("file"), async (req: AuthedRequest, res) => {
   const { folderId, password, name, progressId } = req.body;
@@ -36,10 +64,21 @@ router.post("/upload", upload.single("file"), async (req: AuthedRequest, res) =>
   // drag-and-drop wizard) without touching the local file on disk. Falls
   // back to the file's own name when not provided.
   const displayName = (name && String(name).trim()) || file.originalname;
+  const baseName = displayName.toLowerCase().split("/").pop() || displayName.toLowerCase();
+  if (baseName === ".ds_store" || baseName.startsWith("._")) {
+    if (file.path) {
+      import("fs/promises").then((fsp) => fsp.unlink(file.path).catch(() => {}));
+    }
+    return res.status(400).json({ error: "Ignored system file (.DS_Store)" });
+  }
 
-  await db.read();
-  const folder = db.data!.folders.find((f) => f.id === folderId);
+  const folder = db.folders.get(folderId);
   if (!folder) return res.status(404).json({ error: "Folder not found" });
+
+  const existingFileNames = new Set(
+    db.files.byFolder(folderId).map((f) => f.name)
+  );
+  const uniqueName = getUniqueFileName(existingFileNames, displayName);
 
   let fileKey: Buffer | undefined;
   if (folder.locked) {
@@ -54,12 +93,13 @@ router.post("/upload", upload.single("file"), async (req: AuthedRequest, res) =>
     const record = await uploadFile(client, {
       userId: req.userId!,
       folderId,
-      filename: displayName,
+      filename: uniqueName,
       mimeType: file.mimetype,
       filePath: file.path,
       size: file.size,
       fileKey,
       progressCallback: progressId ? (progress: number) => {
+        uploadProgress.set(progressId, progress);
         const listener = progressEmitters.get(progressId);
         if (listener) listener(progress);
       } : undefined,
@@ -68,16 +108,116 @@ router.post("/upload", upload.single("file"), async (req: AuthedRequest, res) =>
   } catch (err: any) {
     res.status(500).json({ error: err.message || "Upload failed" });
   } finally {
+    if (progressId) {
+      uploadProgress.delete(progressId);
+    }
     import("fs/promises").then(fsp => fsp.unlink(file.path).catch(()=>{}));
   }
 });
 
-router.get("/:fileId/download", async (req: AuthedRequest, res) => {
-  await db.read();
-  const file = db.data!.files.find((f) => f.id === req.params.fileId);
+const inFlightThumbnails = new Map<string, Promise<Buffer | null>>();
+
+router.get("/:fileId/thumbnail", async (req: AuthedRequest, res) => {
+  const file = db.files.get(req.params.fileId);
   if (!file) return res.status(404).json({ error: "File not found" });
 
-  const folder = db.data!.folders.find((f) => f.id === file.folderId);
+  const isImage = file.mimeType?.startsWith("image/");
+  const isVideo = file.mimeType?.startsWith("video/");
+  if (!isImage && !isVideo) {
+    return res.status(404).json({ error: "No thumbnail for this file type" });
+  }
+
+  const cacheDir = path.join(process.env.DATA_DIR || "./data", "thumbnails");
+  await fs.mkdir(cacheDir, { recursive: true });
+  const cachePath = path.join(cacheDir, `${file.id}.jpg`);
+
+  // 1. Check disk cache
+  try {
+    const stat = await fs.stat(cachePath);
+    if (stat.isFile() && stat.size > 0) {
+      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
+      return res.sendFile(path.resolve(cachePath));
+    }
+  } catch {}
+
+  // Check folder password if locked
+  const folder = db.folders.get(file.folderId);
+  let fileKey: Buffer | undefined;
+  if (folder?.locked) {
+    const password = (req.query.password as string) || "";
+    if (!folder.passwordHash || !folder.salt || !verifyFolderPassword(password, folder.passwordHash, folder.salt)) {
+      return res.status(403).json({ error: "Wrong or missing folder password" });
+    }
+    fileKey = deriveFolderFileKey(password, folder.salt);
+  }
+
+  // Deduplicate in-flight fetch for the same thumbnail
+  let fetchPromise = inFlightThumbnails.get(file.id);
+  if (!fetchPromise) {
+    fetchPromise = (async () => {
+      try {
+        const client = await getClientForUser(req.userId!);
+        const chunk = file.chunks[0];
+        if (!chunk) return null;
+
+        const peer = chunk.accessHash
+          ? inputPeerFor({ chatId: chunk.chatId, accessHash: chunk.accessHash } as any)
+          : await getInputPeerForChatId(client, chunk.chatId);
+
+        const [msg] = await client.getMessages(peer, { ids: [chunk.messageId] });
+        if (!msg) return null;
+
+        let thumbBuf: Buffer | undefined;
+        // Attempt to download Telegram's native thumbnail
+        try {
+          thumbBuf = (await client.downloadMedia(msg, { thumb: 0 })) as Buffer;
+          if (!thumbBuf || thumbBuf.length === 0) {
+            thumbBuf = (await client.downloadMedia(msg, { thumb: -1 })) as Buffer;
+          }
+        } catch {}
+
+        if (thumbBuf && thumbBuf.length > 0) {
+          await fs.writeFile(cachePath, thumbBuf).catch(() => {});
+          return thumbBuf;
+        }
+
+        // If Telegram didn't store a separate thumbnail:
+        // For unencrypted images <= 8MB, download the image buffer and cache it
+        if (isImage && !file.encrypted && file.size <= 8 * 1024 * 1024) {
+          const imgBuf = (await client.downloadMedia(msg)) as Buffer;
+          if (imgBuf && imgBuf.length > 0) {
+            await fs.writeFile(cachePath, imgBuf).catch(() => {});
+            return imgBuf;
+          }
+        }
+
+        return null;
+      } catch (err) {
+        console.error(`Error generating thumbnail for ${file.id}:`, err);
+        return null;
+      } finally {
+        inFlightThumbnails.delete(file.id);
+      }
+    })();
+    inFlightThumbnails.set(file.id, fetchPromise);
+  }
+
+  const result = await fetchPromise;
+  if (result && result.length > 0) {
+    res.setHeader("Content-Type", "image/jpeg");
+    res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
+    return res.send(result);
+  }
+
+  return res.status(404).json({ error: "Thumbnail not available" });
+});
+
+router.get("/:fileId/download", async (req: AuthedRequest, res) => {
+  const file = db.files.get(req.params.fileId);
+  if (!file) return res.status(404).json({ error: "File not found" });
+
+  const folder = db.folders.get(file.folderId);
   let fileKey: Buffer | undefined;
   if (folder?.locked) {
     const password = (req.query.password as string) || "";
@@ -122,10 +262,48 @@ router.get("/:fileId/download", async (req: AuthedRequest, res) => {
 });
 
 router.delete("/:fileId", async (req: AuthedRequest, res) => {
-  await db.read();
-  // See note in folders.ts: metadata-only delete in this scaffold.
-  db.data!.files = db.data!.files.filter((f) => f.id !== req.params.fileId);
-  await db.write();
+  db.files.softDelete(req.params.fileId);
+  res.json({ ok: true });
+});
+
+// Bulk move files and folders in a single request
+router.post("/bulk-move", async (req: AuthedRequest, res) => {
+  const { fileIds = [], folderIds = [], destFolderId } = req.body;
+  if (!destFolderId) return res.status(400).json({ error: "destFolderId is required" });
+
+  const dest = db.folders.get(destFolderId);
+  if (!dest) return res.status(404).json({ error: "Destination folder not found" });
+  if (dest.locked) return res.status(400).json({ error: "Can't move items into locked folders" });
+
+  if (Array.isArray(fileIds) && fileIds.length > 0) {
+    for (const fId of fileIds) {
+      const f = db.files.get(fId);
+      if (f && !f.encrypted) {
+        db.files.update(f.id, { folderId: destFolderId });
+      }
+    }
+  }
+
+  if (Array.isArray(folderIds) && folderIds.length > 0) {
+    const allFolders = db.folders.allRaw();
+    for (const fId of folderIds) {
+      if (fId === destFolderId) continue;
+      let walk: string | null = destFolderId;
+      let isDescendant = false;
+      while (walk) {
+        if (walk === fId) {
+          isDescendant = true;
+          break;
+        }
+        const p = allFolders.find((x) => x.id === walk);
+        walk = p?.parentId ?? null;
+      }
+      if (!isDescendant) {
+        db.folders.update(fId, { parentId: destFolderId });
+      }
+    }
+  }
+
   res.json({ ok: true });
 });
 
@@ -139,9 +317,8 @@ router.post("/:fileId/move", async (req: AuthedRequest, res) => {
   const { folderId } = req.body;
   if (!folderId) return res.status(400).json({ error: "folderId is required" });
 
-  await db.read();
-  const file = db.data!.files.find((f) => f.id === req.params.fileId);
-  const dest = db.data!.folders.find((f) => f.id === folderId);
+  const file = db.files.get(req.params.fileId);
+  const dest = db.folders.get(folderId);
   if (!file) return res.status(404).json({ error: "File not found" });
   if (!dest) return res.status(404).json({ error: "Destination folder not found" });
 
@@ -151,8 +328,7 @@ router.post("/:fileId/move", async (req: AuthedRequest, res) => {
     });
   }
 
-  file.folderId = folderId;
-  await db.write();
+  db.files.update(file.id, { folderId });
   res.json({ ok: true });
 });
 
@@ -162,12 +338,10 @@ router.post("/:fileId/rename", async (req: AuthedRequest, res) => {
     return res.status(400).json({ error: "name is required" });
   }
 
-  await db.read();
-  const file = db.data!.files.find((f) => f.id === req.params.fileId);
+  const file = db.files.get(req.params.fileId);
   if (!file) return res.status(404).json({ error: "File not found" });
 
-  file.name = name.trim();
-  await db.write();
+  db.files.update(file.id, { name: name.trim() });
   res.json({ ok: true });
 });
 

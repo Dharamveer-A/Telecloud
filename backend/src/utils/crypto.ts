@@ -97,6 +97,16 @@ export function decryptSession(stored: string): string {
   return plain.toString("utf8");
 }
 
+export function encryptWithMasterKey(data: Buffer): string {
+  const { ciphertext, iv, tag } = encryptBuffer(data, masterKey());
+  return [iv, tag.toString("hex"), ciphertext.toString("hex")].join(":");
+}
+
+export function decryptWithMasterKey(stored: string): Buffer {
+  const [iv, tagHex, dataHex] = stored.split(":");
+  return decryptBuffer(Buffer.from(dataHex, "hex"), masterKey(), iv, Buffer.from(tagHex, "hex"));
+}
+
 // --- Folder passwords -----------------------------------------------------
 // scrypt hash for verifying a folder password, PLUS a derived AES key
 // (mixing the folder password with the server master key) used to

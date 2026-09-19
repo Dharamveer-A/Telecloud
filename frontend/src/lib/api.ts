@@ -54,7 +54,8 @@ export const api = {
 
   getRoot: () => request("/folders/"),
   getAllFolders: () => request("/folders/tree/all"),
-  getFolder: (id: string, password?: string) => request(`/folders/${id}${password ? `?password=${encodeURIComponent(password)}` : ""}`),
+  getFolder: (id: string, password?: string, signal?: AbortSignal) =>
+    request(`/folders/${id}${password ? `?password=${encodeURIComponent(password)}` : ""}`, { signal }),
   createFolder: (parentId: string, name: string) => request("/folders", { method: "POST", body: JSON.stringify({ parentId, name }) }),
   lockFolder: (id: string, password: string) => request(`/folders/${id}/lock`, { method: "POST", body: JSON.stringify({ password }) }),
   unlockFolder: (id: string, password: string) => request(`/folders/${id}/unlock`, { method: "POST", body: JSON.stringify({ password }) }),
@@ -72,6 +73,11 @@ export const api = {
     signal?: AbortSignal
   ) => {
     return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(new Error("Upload cancelled"));
+        return;
+      }
+
       const progressId = Math.random().toString(36).slice(2);
       const form = new FormData();
       form.append("folderId", folderId);
@@ -81,45 +87,79 @@ export const api = {
       form.append("file", file);
 
       const track = makeSpeedTracker(file.size);
-      
-      let es: EventSource | null = null;
+      let receivedServerProgress = false;
+      let pollTimer: any = null;
+
+      const stopPolling = () => {
+        if (pollTimer) {
+          clearInterval(pollTimer);
+          pollTimer = null;
+        }
+      };
+
       if (onProgress) {
-        const url = `${BASE}/files/upload-progress/${progressId}${token() ? `?token=${token()}` : ''}`;
-        es = new EventSource(url);
-        es.onmessage = (e) => {
+        pollTimer = setInterval(async () => {
           try {
-            const data = JSON.parse(e.data);
-            if (data.progress !== undefined) {
-              onProgress(track(data.progress * file.size));
+            const res = await fetch(`${BASE}/files/upload-progress/${progressId}`, {
+              headers: token() ? { Authorization: `Bearer ${token()}` } : {},
+            });
+            if (res.ok) {
+              const data = await res.json();
+              if (data && typeof data.progress === "number" && data.progress > 0) {
+                receivedServerProgress = true;
+                // Map Telegram upload progress from 20% to 100%
+                const p = 0.2 + data.progress * 0.8;
+                onProgress(track(Math.min(file.size, p * file.size)));
+              }
             }
-          } catch {}
-        };
+          } catch {
+            // Ignore transient network errors during progress polling
+          }
+        }, 400);
       }
 
       const xhr = new XMLHttpRequest();
+      if (onProgress) {
+        xhr.upload.onprogress = (e) => {
+          if (!receivedServerProgress && e.lengthComputable && e.total > 0) {
+            // Map browser-to-server upload to 0% - 20% so it never sits at 0%
+            const p = (e.loaded / e.total) * 0.2;
+            onProgress(track(Math.min(file.size, p * file.size)));
+          }
+        };
+      }
+
       if (signal) {
         signal.addEventListener("abort", () => {
+          stopPolling();
           xhr.abort();
-          if (es) es.close();
           reject(new Error("Upload cancelled"));
         });
       }
+
       xhr.open("POST", `${BASE}/files/upload`);
       if (token()) xhr.setRequestHeader("Authorization", `Bearer ${token()}`);
+      
       xhr.onload = () => {
-        if (es) es.close();
+        stopPolling();
         try {
           const data = JSON.parse(xhr.responseText);
-          if (xhr.status >= 200 && xhr.status < 300) resolve(data);
-          else reject(new Error(data.error || "Upload failed"));
+          if (xhr.status >= 200 && xhr.status < 300) {
+            if (onProgress) onProgress(track(file.size));
+            resolve(data);
+          } else {
+            reject(new Error(data.error || "Upload failed"));
+          }
         } catch {
           reject(new Error("Upload failed"));
         }
       };
+
       xhr.onerror = () => {
-        if (es) es.close();
+        stopPolling();
         reject(new Error("Upload failed"));
       };
+
       xhr.send(form);
     });
   },
@@ -134,10 +174,104 @@ export const api = {
     const qs = params.toString();
     return `${BASE}/files/${id}/download${qs ? `?${qs}` : ""}`;
   },
+  thumbnailUrl: (id: string, password?: string) => {
+    const params = new URLSearchParams();
+    if (password) params.set("password", password);
+    params.set("token", localStorage.getItem("telecloud_token") || "");
+    const qs = params.toString();
+    return `${BASE}/files/${id}/thumbnail${qs ? `?${qs}` : ""}`;
+  },
   folderZipUrl: (id: string, password?: string) => `${BASE}/folders/${id}/download-zip${password ? `?password=${encodeURIComponent(password)}` : ""}`,
   deleteFile: (id: string) => request(`/files/${id}`, { method: "DELETE" }),
   moveFile: (id: string, folderId: string) => request(`/files/${id}/move`, { method: "POST", body: JSON.stringify({ folderId }) }),
   renameFile: (id: string, name: string) => request(`/files/${id}/rename`, { method: "POST", body: JSON.stringify({ name }) }),
+  bulkMove: (fileIds: string[], folderIds: string[], destFolderId: string) =>
+    request(`/files/bulk-move`, {
+      method: "POST",
+      body: JSON.stringify({ fileIds, folderIds, destFolderId }),
+    }),
+  getTrash: () => request("/trash"),
+  restoreTrash: (ids: string[]) =>
+    request("/trash/restore", { method: "POST", body: JSON.stringify({ ids }) }),
+  emptyTrash: () => request("/trash/empty", { method: "DELETE" }),
+  deleteTrashPermanent: (id: string) => request(`/trash/${id}`, { method: "DELETE" }),
+  search: (query: string) => request(`/files/search?q=${encodeURIComponent(query)}`),
+
+  // Shares (Protected)
+  createShare: (data: {
+    targetType: "file" | "folder";
+    targetId: string;
+    password?: string;
+    expiresInHours?: number | null;
+    folderPassword?: string;
+  }) => request("/shares", { method: "POST", body: JSON.stringify(data) }),
+  getShares: () => request("/shares"),
+  getShareForTarget: (targetId: string) => request(`/shares/target/${targetId}`),
+  revokeShare: (id: string) => request(`/shares/${id}`, { method: "DELETE" }),
+
+  // Public Shares (Unauthenticated)
+  getPublicShare: async (token: string) => {
+    const res = await fetch(`${BASE}/public/shares/${token}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err: any = new Error(data.error || "Failed to load share");
+      err.status = res.status;
+      err.expired = data.expired;
+      throw err;
+    }
+    return data;
+  },
+  verifyPublicSharePassword: async (token: string, password: string) => {
+    const res = await fetch(`${BASE}/public/shares/${token}/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || "Incorrect password");
+    }
+    return data;
+  },
+  publicShareDownloadUrl: (token: string, password?: string, dl = false) => {
+    const params = new URLSearchParams();
+    if (password) params.set("password", password);
+    if (dl) params.set("dl", "1");
+    const qs = params.toString();
+    return `${BASE}/public/shares/${token}/download${qs ? `?${qs}` : ""}`;
+  },
+  async downloadPublicShareWithProgress(
+    token: string,
+    password?: string,
+    onProgress?: (p: TransferProgress) => void
+  ): Promise<Blob> {
+    const url = api.publicShareDownloadUrl(token, password, true);
+    const res = await fetch(url);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `Download failed (${res.status})`);
+    }
+    const total = parseInt(res.headers.get("Content-Length") || "0", 10);
+    if (!res.body || !total) return res.blob();
+
+    const track = makeSpeedTracker(total);
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let loaded = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      loaded += value.length;
+      if (onProgress) onProgress(track(loaded));
+    }
+    return new Blob(chunks as BlobPart[]);
+  },
+
+  // Tunnel (Auto Public Online URL)
+  getTunnelStatus: (): Promise<{ active: boolean; url: string | null }> => request("/tunnel"),
+  startTunnel: (): Promise<{ active: boolean; url: string }> => request("/tunnel/start", { method: "POST" }),
+  stopTunnel: (): Promise<{ active: boolean; url: null }> => request("/tunnel/stop", { method: "POST" }),
 
   // Downloads a URL with byte-level progress + live speed, used for the
   // "Download" context-menu action on both single files and whole

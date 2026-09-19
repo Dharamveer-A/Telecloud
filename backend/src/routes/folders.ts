@@ -6,6 +6,7 @@ import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { hashFolderPassword, verifyFolderPassword, deriveFolderFileKey } from "../utils/crypto";
 import { getClientForUser } from "../telegram/client";
 import { downloadFile, streamFileToResponse } from "../telegram/fileService";
+import { getOrCreateForumSupergroup, createFolderTopic, editFolderTopic } from "../telegram/storageManager";
 
 const router = Router();
 router.use(requireAuth);
@@ -19,9 +20,8 @@ function rootIdFor(userId: string) {
 // must match, otherwise only folder metadata (name, locked flag) is
 // returned - never its contents.
 router.get("/:folderId", async (req: AuthedRequest, res) => {
-  await db.read();
-  const folder = db.data!.folders.find((f) => f.id === req.params.folderId);
-  if (!folder) return res.status(404).json({ error: "Folder not found" });
+  const folder = db.folders.get(req.params.folderId);
+  if (!folder || folder.deletedAt) return res.status(404).json({ error: "Folder not found" });
 
   if (folder.locked) {
     const password = (req.query.password as string) || "";
@@ -31,12 +31,22 @@ router.get("/:folderId", async (req: AuthedRequest, res) => {
     }
   }
 
-  const subfolders = db.data!.folders.filter((f) => f.parentId === folder.id);
-  const files = db.data!.files.filter((f) => f.folderId === folder.id);
+  const subfolders = db.folders.subfolders(folder.id);
+  const files = db.files.byFolder(folder.id);
   res.json({
     folder,
     locked: false,
-    subfolders: subfolders.map((f) => ({ id: f.id, name: f.name, locked: f.locked })),
+    subfolders: subfolders.map((f) => {
+      const childFilesCount = db.files.countByFolder(f.id);
+      const childFoldersCount = db.folders.countSubfolders(f.id);
+      return {
+        id: f.id,
+        name: f.name,
+        locked: f.locked,
+        createdAt: f.createdAt,
+        itemCount: childFilesCount + childFoldersCount,
+      };
+    }),
     files: files.map((f) => ({ id: f.id, name: f.name, size: f.size, mimeType: f.mimeType, createdAt: f.createdAt, encrypted: f.encrypted })),
   });
 });
@@ -47,10 +57,7 @@ router.get("/", async (req: AuthedRequest, res) => {
 });
 
 router.get("/tree/all", async (req: AuthedRequest, res) => {
-  await db.read();
-  // Filter out the root folder if we just want subfolders, or just return all folders.
-  // We'll return everything so the frontend can build a tree.
-  const allFolders = db.data!.folders.map(f => ({
+  const allFolders = db.folders.all().map((f) => ({
     id: f.id,
     parentId: f.parentId,
     name: f.name,
@@ -63,13 +70,27 @@ router.post("/", async (req: AuthedRequest, res) => {
   const { parentId, name } = req.body;
   if (!parentId || !name) return res.status(400).json({ error: "parentId and name are required" });
 
-  await db.read();
-  const parent = db.data!.folders.find((f) => f.id === parentId);
+  const parent = db.folders.get(parentId);
   if (!parent) return res.status(404).json({ error: "Parent folder not found" });
 
-  const folder = { id: uuid(), parentId, name, createdAt: Date.now(), locked: false };
-  db.data!.folders.push(folder);
-  await db.write();
+  let topicId: number | undefined;
+  try {
+    const client = await getClientForUser(req.userId!);
+    const forumMod = await getOrCreateForumSupergroup(client, req.userId!);
+    topicId = await createFolderTopic(client, forumMod, name.trim());
+  } catch (err) {
+    console.error("Failed to create Telegram forum topic for folder:", err);
+  }
+
+  const folder: FolderRecord = {
+    id: uuid(),
+    parentId,
+    name: name.trim(),
+    createdAt: Date.now(),
+    locked: false,
+    topicId: topicId || null,
+  };
+  db.folders.create(folder);
   res.json({ folder });
 });
 
@@ -81,74 +102,51 @@ router.post("/:folderId/lock", async (req: AuthedRequest, res) => {
   if (!password || password.length < 6) {
     return res.status(400).json({ error: "Password must be at least 6 characters" });
   }
-  await db.read();
-  const folder = db.data!.folders.find((f) => f.id === req.params.folderId);
+
+  const folder = db.folders.get(req.params.folderId);
   if (!folder) return res.status(404).json({ error: "Folder not found" });
 
   const { hash, salt } = hashFolderPassword(password);
-  folder.locked = true;
-  folder.passwordHash = hash;
-  folder.salt = salt;
-  await db.write();
+  db.folders.update(folder.id, {
+    locked: true,
+    passwordHash: hash,
+    salt,
+  });
   res.json({ ok: true });
 });
 
 router.post("/:folderId/unlock-check", async (req: AuthedRequest, res) => {
   const { password } = req.body;
-  await db.read();
-  const folder = db.data!.folders.find((f) => f.id === req.params.folderId);
+  const folder = db.folders.get(req.params.folderId);
   if (!folder?.locked) return res.status(400).json({ error: "Folder is not locked" });
+
   const ok = !!folder.passwordHash && !!folder.salt && verifyFolderPassword(password, folder.passwordHash, folder.salt);
   res.json({ ok });
 });
 
 router.post("/:folderId/unlock", async (req: AuthedRequest, res) => {
   const { password } = req.body;
-  await db.read();
-  const folder = db.data!.folders.find((f) => f.id === req.params.folderId);
+  const folder = db.folders.get(req.params.folderId);
   if (!folder?.locked) return res.status(400).json({ error: "Folder is not locked" });
   
   const ok = !!folder.passwordHash && !!folder.salt && verifyFolderPassword(password, folder.passwordHash, folder.salt);
   if (!ok) return res.status(403).json({ error: "Wrong password" });
 
-  const hasEncrypted = db.data!.files.some(f => f.folderId === folder.id && f.encrypted);
+  const hasEncrypted = db.files.byFolder(folder.id).some((f) => f.encrypted);
   if (hasEncrypted) {
     return res.status(400).json({ error: "Cannot unlock folder: it contains encrypted files. Please move or delete them first." });
   }
 
-  folder.locked = false;
-  folder.passwordHash = undefined;
-  folder.salt = undefined;
-  await db.write();
+  db.folders.update(folder.id, {
+    locked: false,
+    passwordHash: undefined,
+    salt: undefined,
+  });
   res.json({ ok: true });
 });
 
 router.delete("/:folderId", async (req: AuthedRequest, res) => {
-  await db.read();
-  const id = req.params.folderId;
-
-  // Recursive: gather this folder + every descendant folder id, then
-  // remove all files under any of them. Without this, deleting a folder
-  // that has subfolders orphaned them - they'd vanish from navigation
-  // but stay in the DB forever.
-  const toDelete = new Set<string>([id]);
-  let grew = true;
-  while (grew) {
-    grew = false;
-    for (const f of db.data!.folders) {
-      if (f.parentId && toDelete.has(f.parentId) && !toDelete.has(f.id)) {
-        toDelete.add(f.id);
-        grew = true;
-      }
-    }
-  }
-
-  // Note: this only removes metadata. Chunks already sent to Telegram for
-  // files inside are NOT deleted from the storage channel automatically
-  // in this scaffold.
-  db.data!.files = db.data!.files.filter((f) => !toDelete.has(f.folderId));
-  db.data!.folders = db.data!.folders.filter((f) => !toDelete.has(f.id));
-  await db.write();
+  db.folders.softDelete(req.params.folderId);
   res.json({ ok: true });
 });
 
@@ -158,26 +156,25 @@ router.post("/:folderId/move", async (req: AuthedRequest, res) => {
   const { newParentId } = req.body;
   if (!newParentId) return res.status(400).json({ error: "newParentId is required" });
 
-  await db.read();
-  const folder = db.data!.folders.find((f) => f.id === req.params.folderId);
-  const target = db.data!.folders.find((f) => f.id === newParentId);
+  const folder = db.folders.get(req.params.folderId);
+  const target = db.folders.get(newParentId);
   if (!folder) return res.status(404).json({ error: "Folder not found" });
   if (!target) return res.status(404).json({ error: "Destination folder not found" });
 
   if (folder.id === newParentId) {
     return res.status(400).json({ error: "Can't move a folder into itself" });
   }
+  const allFolders = db.folders.allRaw();
   let walk: string | null = target.id;
   while (walk) {
     if (walk === folder.id) {
       return res.status(400).json({ error: "Can't move a folder into one of its own subfolders" });
     }
-    const parent: any = db.data!.folders.find((f) => f.id === walk);
+    const parent = allFolders.find((f) => f.id === walk);
     walk = parent?.parentId ?? null;
   }
 
-  folder.parentId = newParentId;
-  await db.write();
+  db.folders.update(folder.id, { parentId: newParentId });
   res.json({ ok: true });
 });
 
@@ -187,24 +184,28 @@ router.post("/:folderId/rename", async (req: AuthedRequest, res) => {
     return res.status(400).json({ error: "name is required" });
   }
 
-  await db.read();
-  const folder = db.data!.folders.find((f) => f.id === req.params.folderId);
+  const folder = db.folders.get(req.params.folderId);
   if (!folder) return res.status(404).json({ error: "Folder not found" });
 
-  folder.name = name.trim();
-  await db.write();
+  db.folders.update(folder.id, { name: name.trim() });
+
+  if (folder.topicId) {
+    try {
+      const client = await getClientForUser(req.userId!);
+      const forumMod = await getOrCreateForumSupergroup(client, req.userId!);
+      await editFolderTopic(client, forumMod, folder.topicId, name.trim());
+    } catch (err) {
+      console.error("Failed to rename Telegram forum topic:", err);
+    }
+  }
+
   res.json({ ok: true });
 });
 
-// Download an entire folder (recursively) as a single zip. The password
-// (if the target folder itself is locked) decrypts its own direct files;
-// any nested subfolder that's ALSO locked gets skipped in the archive
-// (its password isn't known here) with a small note file in its place,
-// rather than failing the whole download.
+// Download an entire folder (recursively) as a single zip.
 router.get("/:folderId/download-zip", async (req: AuthedRequest, res) => {
-  await db.read();
-  const root = db.data!.folders.find((f) => f.id === req.params.folderId);
-  if (!root) return res.status(404).json({ error: "Folder not found" });
+  const root = db.folders.get(req.params.folderId);
+  if (!root || root.deletedAt) return res.status(404).json({ error: "Folder not found" });
 
   const rootPassword = (req.query.password as string) || "";
   if (root.locked) {
@@ -237,7 +238,7 @@ router.get("/:folderId/download-zip", async (req: AuthedRequest, res) => {
       return;
     }
 
-    const files = db.data!.files.filter((f) => f.folderId === folder.id);
+    const files = db.files.byFolder(folder.id);
     for (const file of files) {
       const fileKey = file.encrypted && password ? deriveFolderFileKey(password, folder.salt!) : undefined;
       try {
@@ -250,7 +251,7 @@ router.get("/:folderId/download-zip", async (req: AuthedRequest, res) => {
       }
     }
 
-    const subfolders = db.data!.folders.filter((f) => f.parentId === folder.id);
+    const subfolders = db.folders.subfolders(folder.id);
     for (const sub of subfolders) {
       await addFolder(sub, `${zipPath}/${sub.name}`);
     }
@@ -260,7 +261,6 @@ router.get("/:folderId/download-zip", async (req: AuthedRequest, res) => {
     await addFolder(root, root.name);
     await archive.finalize();
   } catch (err: any) {
-    // headers likely already sent (streaming zip) - best effort abort
     archive.abort();
     res.end();
   }

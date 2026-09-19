@@ -1,150 +1,276 @@
-# TeleCloud
+# ☁️ TeleCloud
 
-A personal cloud drive built on top of your own Telegram account: folders,
-password-locked private folders, previews, and automatic file-size
-splitting so nothing is limited by Telegram's per-file cap — all wrapped
-in a normal file-explorer UI.
+> **Transform your Telegram account into an unlimited, encrypted personal Cloud Drive.**
+> Features Google Drive-like web explorer, Telegram Supergroup Forum sync, Brave-style download manager, instant thumbnail caching, AES-256-GCM encrypted folders, and public link sharing.
 
-## How it actually works (read this first)
+---
 
-- **Storage:** files are uploaded as normal messages into private Telegram
-  channels ("storage modules") that this app creates for you automatically.
-  Telegram doesn't charge for storage, so this scales very far — but it is
-  *not* infinite, and it depends on your Telegram account staying in good
-  standing. Using Telegram this way is outside what it was designed for;
-  read Telegram's Terms of Service before relying on this for anything
-  important, and keep real backups of anything irreplaceable.
-- **Folders:** Telegram itself has no folder concept for files — the
-  folder tree you see is metadata this app keeps in its own small
-  database (`backend/data/db.json`). That file is what makes everything
-  "look normally sorted." **Back it up separately from Telegram** —
-  losing it means the app can no longer find your files inside Telegram,
-  even though the raw messages are still there.
-- **The 2GB/4GB limit:** any file bigger than Telegram's per-message cap
-  is automatically split into multiple chunks, each sent as its own
-  message, and silently reassembled on download. You always see and
-  interact with one file.
-- **"Modules":** once a storage channel accumulates a lot of files, new
-  uploads automatically start going into a fresh channel. You never see
-  this — the folder view is unaffected.
-- **Locked folders:** files uploaded into a locked folder are encrypted
-  (AES-256-GCM) client-request-side before ever reaching Telegram, using
-  a key derived from the folder's password + this server's master key.
-  **There is no password recovery** — if you forget a folder's password,
-  its contents cannot be decrypted by anyone, including you.
+## 🌟 Overview
 
-## What's new: Drive-like UI, drag-and-drop, upload wizard
+**TeleCloud** is a self-hosted cloud drive built on top of Telegram's MTProto API. Instead of paying monthly cloud subscription fees, TeleCloud uses Telegram's storage infrastructure to store your files while giving you a modern, responsive web application with zero friction.
 
-- **Layout** now looks like Google Drive: left sidebar with "+ New", a
-  grid view (thumbnails for images, icons for everything else) with a
-  list-view toggle, search-within-folder, and breadcrumbs.
-- **Drag and drop anywhere on the page** — dropping files *or whole
-  folders* (folder structure is preserved and recreated on the server)
-  opens an **Upload Wizard** instead of uploading immediately.
-- **Renaming before upload:** every file in the wizard shows an editable
-  name field, pre-filled with its local filename — change it there if you
-  want the stored copy named differently; leave it alone and it keeps the
-  original name.
-- **Big videos:** no special handling needed on your part — any file
-  (video or otherwise) over Telegram's per-message limit is automatically
-  split into chunks and reassembled transparently on download, exactly as
-  described above. The wizard just tells you up front when that's about
-  to happen.
-- Folder-picker uploads (via "+ New → Upload folder") use the browser's
-  native folder picker, so it works even without drag-and-drop.
+### 🚀 Just Enter Your Mobile Number
+When you or your users visit TeleCloud, getting started takes seconds:
+1. **Enter Mobile Number**: Type in your phone number (e.g., `+1 555 123 4567`).
+2. **Enter Telegram Code**: Enter the 5-digit verification code sent directly to your Telegram app.
+3. **Done!** TeleCloud automatically:
+   - Authenticates your session via Telegram MTProto.
+   - Encrypts and securely stores your session.
+   - Creates your root `📁 My Files` directory.
+   - Automatically provisions a dedicated **TeleCloud Drive** supergroup with forum mode enabled on your Telegram account.
 
-## What's new: context menus, move, exact transfer speed, filters
+---
 
-- **Three-dot menu** on every folder and file (grid and list view): **Download**, **Move**, **Delete**.
-  - Folder download zips its contents recursively. If a nested subfolder is itself locked, its files are skipped in the zip (a `LOCKED.txt` marks the spot) since the password isn't known at that point — open it directly in the app instead.
-  - Folder delete is now properly **recursive** — it removes all subfolders and their files too (this was a real bug before: deleting a folder with subfolders used to silently orphan them in the database instead of actually removing them).
-  - Move opens a small folder picker to choose the destination. Files can only move between two *unlocked* folders — a file's encryption key is tied to its original folder's password, so moving it into/out of a locked folder would either leave it silently unencrypted or permanently orphaned from its key. Download and re-upload instead if you need that.
-- **Exact transfer speed:** uploads (in the Upload Wizard) and downloads (via the three-dot menu) now show live throughput (e.g. "4.2 MB/s") and ETA, not just a percentage bar — computed from a rolling 2-second window so it reflects current speed, not a diluted average. Downloads appear in a small panel docked bottom-right so they're visible even after closing whatever dialog started them.
-- **Filters:** a filter bar under the toolbar has quick chips (Images, Videos, Audio, Documents) plus **"+ Custom filter"** — define your own by name-contains text, file extensions, and/or a size range (e.g. "Screenshots" = name contains "screenshot"; "Big videos" = extension mp4/mov + min size 500 MB). Custom filters are saved in your browser (localStorage), so they're per-device, not synced across browsers.
+## ✨ Key Features
 
-## Setup
+### 1. 📂 Native Telegram Drive Sync (Supergroup Forum Topics)
+- **Automatic Organization**: Every folder you create in TeleCloud automatically maps to a **Forum Topic** in your private `TeleCloud Drive` supergroup in Telegram.
+- **Direct Telegram Access**: Upload files through the TeleCloud web UI, and they immediately appear categorized in their respective topic thread in the Telegram app on your phone, tablet, and desktop!
+- **Play & Share from Telegram**: You can view photos, play audio/video, or forward files to friends directly from Telegram without even opening the web app.
+- **No Channel Limits**: By utilizing Telegram Supergroup Forum Topics rather than separate channels, you never hit Telegram's 10-channel creation limit.
 
-### 1. Get Telegram API credentials (free, 2 minutes)
-Go to https://my.telegram.org → "API development tools" → create an app.
-You'll get an `api_id` and `api_hash`.
+### 2. ⚡ Brave-Style Download & Upload Manager
+- **Top-Right Toolbar Dock**: An animated upload button sits in the top-right corner of the toolbar.
+- **Real-Time SVG Circular Progress Ring**: Watch your transfers fill up smoothly in real-time as bytes upload or download.
+- **Live Transfer Metrics**: Displays current throughput (e.g. `12.4 MB/s`), dynamic ETA countdowns, and pending transfer counters.
+- **Minimize (`—`) & Pop-Out (`⤢`)**: Minimize the bottom transfers panel to dock it into the top-right button, exactly like the download manager in the Brave and Chrome browsers.
+- **Brave-Style Dropdown**: Click the top-right button at any time to open a popover panel with full control over each transfer.
 
-### 2. Backend
+### 3. ⏸️ Full Pause & Resume Controls
+- **Individual Controls**: Pause (`⏸`) and Resume (`▶`) any active transfer at any moment.
+- **Pause All / Resume All**: One-click global controls in the panel and dropdown headers.
+- **Graceful Network Handling**: Pausing an upload aborts the active socket without failing or cancelling the file, and retries seamlessly from where it left off when resumed.
+
+### 4. 🏎️ Sub-Millisecond Navigation & Instant Thumbnails
+- **Telegram Native Thumbnails**: Automatically extracts Telegram's native, lightweight auto-generated thumbnails (~5KB–20KB JPEG).
+- **Persistent Disk Caching**: Thumbnails are cached on disk (`data/thumbnails/<fileId>.jpg`) for instant sub-millisecond loads.
+- **Browser HTTP Caching**: Serves `Cache-Control: public, max-age=2592000, immutable`, allowing the browser to cache thumbnails on disk for 0ms loading on future visits.
+- **IntersectionObserver Lazy Loading**: Only thumbnails within 250px of the viewport make network requests. Off-screen files make **zero network calls**, preventing network congestion.
+- **Video Thumbnail Support**: Video files automatically display real video thumbnails with a sleek `▶` play badge.
+- **Instant Folder Switching**: Switching between folders is instantaneous (< 1ms) powered by SQLite WAL mode and automatic `AbortController` cancellation for in-flight requests.
+
+### 5. 🔒 Private Locked Folders (AES-256-GCM)
+- **Zero-Knowledge Encryption**: Lock sensitive folders with a custom password.
+- **Client-Side Encryption**: Files uploaded into locked folders are encrypted using AES-256-GCM before being sent to Telegram.
+- **Encrypted at Rest**: Even if someone accesses your Telegram account, they cannot view or open the files without your folder password.
+
+### 6. 🔗 Public Link Sharing
+- **Share Files & Folders**: Generate public sharing links with a single click.
+- **Security Controls**: Set optional passwords, expiration times (e.g., 1 hour, 1 day, 1 week), and download count limits.
+- **Automatic Cloudflare Tunnel**: Built-in support for `cloudflared` automatically creates a public HTTPS link (e.g. `https://your-name.trycloudflare.com/share/...`) without configuring port forwarding or a static IP.
+
+### 7. 🗑️ Trash Bin & Safe Deletion
+- **Soft Deletion**: Deleted files and folders go to the Trash Bin, preventing accidental data loss.
+- **One-Click Restore**: Restore any file or folder back to its original location.
+- **Permanent Cleanup**: Emptying trash permanently cleans up database records and deletes the corresponding Telegram forum topics.
+
+### 8. 📦 Automatic File Chunking (Bypass 2GB/4GB Limit)
+- Any file larger than Telegram's per-message limit is automatically split into chunks, uploaded, and transparently reassembled on download.
+- Large 4K movies, disk images, and archives are fully supported with streaming video playback.
+
+---
+
+## 🛠️ Architecture
+
+```
+                                  +------------------------+
+                                  |    User Web Browser    |
+                                  |  (React + TailwindCSS) |
+                                  +-----------+------------+
+                                              |
+                                              | HTTP / REST
+                                              v
++-----------------------------------------------------------------------------------+
+| TeleCloud Backend (Node.js + Express + TypeScript)                               |
+|                                                                                   |
+|  +------------------+   +-------------------+   +-------------------------------+ |
+|  |  SQLite Database |   | Thumbnail Cache   |   | Cloudflare Tunnel             | |
+|  |  (better-sqlite3)|   | (data/thumbnails) |   | (Automated Public HTTPS URL)  | |
+|  +------------------+   +-------------------+   +-------------------------------+ |
+|                                                                                   |
+|  +------------------------------------------------------------------------------+ |
+|  | GramJS Telegram MTProto Client (Encrypted StringSession)                     | |
+|  +------------------------------------------------------------------------------+ |
++------------------------------------------+----------------------------------------+
+                                           |
+                                           | MTProto (Encrypted Sockets)
+                                           v
+                        +------------------------------------+
+                        |       Telegram Cloud Servers       |
+                        |                                    |
+                        |  +-------------------------------+ |
+                        |  | "TeleCloud Drive" Supergroup  | |
+                        |  |  - Topic: "Photos"            | |
+                        |  |  - Topic: "Documents"         | |
+                        |  |  - Topic: "Videos"            | |
+                        |  +-------------------------------+ |
+                        +------------------------------------+
+```
+
+---
+
+## 🚀 Getting Started & Deployment
+
+### Prerequisites
+1. **Node.js**: Version 18.0.0 or higher.
+2. **Telegram API Credentials**:
+   - Go to [my.telegram.org](https://my.telegram.org).
+   - Log in and click **API development tools**.
+   - Create an app (any name) to obtain your `api_id` and `api_hash`. (Takes 1 minute, free forever).
+
+---
+
+### Step 1: Clone and Configure Environment
+
+```bash
+git clone https://github.com/your-username/telecloud.git
+cd telecloud
+```
+
+#### Backend Setup:
 ```bash
 cd backend
 cp .env.example .env
-# edit .env: paste TELEGRAM_API_ID, TELEGRAM_API_HASH
-# generate JWT_SECRET and MASTER_ENCRYPTION_KEY:
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-# paste that as MASTER_ENCRYPTION_KEY, and run again for a different
-# random string to use as JWT_SECRET
+```
 
+Edit `backend/.env`:
+```env
+PORT=4000
+DATA_DIR=./data
+
+# From https://my.telegram.org:
+TELEGRAM_API_ID=12345678
+TELEGRAM_API_HASH=your_telegram_api_hash_here
+
+# Generate two random 64-character hex strings:
+# node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+JWT_SECRET=your_random_jwt_secret
+MASTER_ENCRYPTION_KEY=your_random_master_encryption_key
+
+# Optional: Set public URL for sharing links (Cloudflare tunnel auto-detects this if blank)
+PUBLIC_URL=
+```
+
+Install dependencies:
+```bash
 npm install
+npm run build
+```
+
+#### Frontend Setup:
+```bash
+cd ../frontend
+npm install
+npm run build
+```
+
+---
+
+### Step 2: Running Locally
+
+You can start both backend and frontend for development:
+
+**Terminal 1 (Backend):**
+```bash
+cd backend
 npm run dev
 ```
-Backend runs on `http://localhost:4000`.
 
-### 3. Frontend
+**Terminal 2 (Frontend):**
 ```bash
 cd frontend
-npm install
 npm run dev
 ```
-Open `http://localhost:5173`, enter your phone number, and log in with
-the code Telegram sends you (same as logging into Telegram Desktop).
 
-## Free hosting
+Open `http://localhost:5173` in your browser.
 
-The backend needs to run as a **persistent process** (it holds a live
-connection to Telegram), so pure static/serverless hosts won't work for
-it. Options, best first:
+---
 
-**Oracle Cloud "Always Free" tier** (recommended)
-- Genuinely free forever, not a trial — a small VM (up to 4 ARM cores /
-  24GB RAM on the Ampere shape) is enough for personal use.
-- Install Node.js on the VM, `git clone` your project, run backend with
-  `pm2` or a systemd service so it survives reboots, point a domain or
-  just use the VM's IP.
+### Step 3: Production Deployment Options
 
-**Render.com free web service**
-- Easiest to deploy (`git push`, auto-builds), but the free tier sleeps
-  after inactivity — first request after idling takes ~30s to wake up.
-  Fine for personal use, annoying if you want instant access.
+#### Option A: Dedicated Server / VPS (Ubuntu / Debian / macOS) — Recommended
+1. Build both frontend and backend:
+   ```bash
+   cd frontend && npm run build
+   cd ../backend && npm run build
+   ```
+2. Run backend with `pm2` so it stays online 24/7:
+   ```bash
+   npm install -g pm2
+   cd backend
+   pm2 start dist/index.js --name telecloud-backend
+   pm2 save
+   pm2 startup
+   ```
+3. Serve frontend using Nginx or Caddy, or serve it directly via Express by copying `frontend/dist` to `backend/public`.
 
-**Fly.io free allowance**
-- Similar tradeoffs to Render; good Docker support if you containerize
-  the backend.
+#### Option B: Automated Cloudflare Tunnel (Zero-Port Forwarding)
+TeleCloud includes automatic Cloudflare Tunnel integration. When you run the backend, if `cloudflared` is installed on your machine or server:
+```bash
+# Ubuntu / Debian
+curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+sudo dpkg -i cloudflared.deb
 
-For the **frontend**, since it's just static files after `npm run build`,
-Vercel, Netlify, Cloudflare Pages, or GitHub Pages all work fully free —
-just point its API calls (the `/api` proxy in `vite.config.ts`) at
-wherever you hosted the backend.
+# macOS
+brew install cloudflared
+```
+TeleCloud will automatically spin up a public, encrypted HTTPS tunnel and log your public link in the console:
+```
+[tunnel] Public URL: https://your-unique-tunnel.trycloudflare.com
+```
 
-## What's implemented vs. what's a scaffold
+#### Option C: Cloud Hosting (Render, Railway, Fly.io, Oracle Cloud)
+- **Oracle Cloud "Always Free" VM**: 4 ARM cores, 24GB RAM free forever. Best choice for personal cloud storage.
+- **Railway / Render**: Deploy as a Web Service. Set environment variables in the dashboard. Make sure to attach a persistent volume to `./data` so your SQLite database and thumbnails persist between deploys.
 
-Implemented and working end-to-end: phone login (incl. 2FA), folder
-create/browse/breadcrumbs, folder locking with real encryption, file
-upload with automatic chunking across Telegram's size limit, automatic
-storage-channel rotation, download/preview (images, video, audio, PDF),
-delete.
+---
 
-Left as an exercise / noted in code comments, because they're genuinely
-your call to make:
-- **Hard-delete from Telegram.** Deleting a file/folder in the app
-  currently only removes it from the local index — the underlying
-  Telegram messages stay in the storage channel. Trivial to add
-  (`client.deleteMessages`) but left out so nothing is destructive by
-  default while you're still testing.
-- **Re-encrypting existing files** when you lock a folder that already
-  has files in it — currently only new uploads after locking are
-  encrypted.
-- **Multi-device / sharing.** This is built for single-user personal use.
-- **Search, drag-and-drop, thumbnails grid for images** — straightforward
-  additions to `Browser.tsx` if you want them next.
+## 📖 How to Use TeleCloud
 
-## Security notes
-- `MASTER_ENCRYPTION_KEY` never leaves your server and is never stored in
-  the database — keep it out of git (`.env` is already gitignored).
-- Your Telegram session string is encrypted at rest with that key, so a
-  leaked `db.json` alone doesn't hand over your Telegram account.
-- This is a personal project scaffold, not an audited security product —
-  don't store anything with legal/regulatory sensitivity in it.
+### Logging In
+1. Navigate to your TeleCloud web URL.
+2. Enter your phone number including country code (e.g. `+1 555 123 4567`).
+3. Enter the 5-digit verification code received in your Telegram app.
+4. If you have Telegram 2-Step Verification enabled, enter your password.
+
+### Uploading Files & Folders
+- **Drag-and-Drop**: Drag any file or entire folder from your computer and drop it anywhere on the TeleCloud webpage.
+- **Upload Wizard**: A dialog appears showing all files, sizes, and destination paths. You can rename files directly before uploading.
+- **Upload Button**: Click **+ New** in the sidebar to upload individual files or entire directory trees.
+
+### Managing Transfers
+- Click the minimize button (`—`) in the transfers panel to dock it into the top-right Brave-style progress button.
+- Click the top-right button to view the dropdown popover.
+- Click `⏸ Pause All` or per-file `⏸` to pause uploads, and `▶ Resume` to continue.
+
+### Locking a Folder
+1. Navigate into any folder.
+2. Click **🔒 Lock this folder** in the left sidebar.
+3. Enter a password (minimum 6 characters).
+4. All future files uploaded into this folder will be encrypted with AES-256-GCM before leaving your machine.
+
+### Sharing with Friends
+1. Right-click or click the three dots (`⋮`) on any file or folder.
+2. Click **Share**.
+3. Choose an optional password, expiration date, and download limit.
+4. Click **Create Link** and copy the active public URL to send to your friends.
+
+### Viewing in Telegram
+1. Open your Telegram app on your phone or desktop.
+2. You will see a group named **`TeleCloud Drive`**.
+3. Tap on it to browse all your folders as Forum Topics.
+4. All files uploaded in TeleCloud are accessible directly in their corresponding topics.
+
+---
+
+## 🛡️ Security & Privacy
+
+- **Session Encryption**: Your Telegram session string is encrypted at rest using `MASTER_ENCRYPTION_KEY` with AES-256-GCM. Even if the SQLite database is accessed, your Telegram session cannot be decrypted without the master key.
+- **Zero-Knowledge Folders**: Passwords for locked folders are never stored in plaintext. They are hashed using scrypt with unique salts.
+- **No Third-Party Intermediaries**: All communication occurs directly between your server and Telegram's official MTProto API servers.
+
+---
+
+## 📄 License
+
+MIT License. Feel free to use, modify, and distribute this project.

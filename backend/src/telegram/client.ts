@@ -4,6 +4,7 @@ import { Api } from "telegram";
 import { computeCheck } from "telegram/Password";
 import { encryptSession, decryptSession } from "../utils/crypto";
 import { db } from "../db/db";
+import { getOrCreateForumSupergroup } from "./storageManager";
 
 const apiId = parseInt(process.env.TELEGRAM_API_ID || "0", 10);
 const apiHash = process.env.TELEGRAM_API_HASH || "";
@@ -91,27 +92,30 @@ async function finishLogin(phone: string, client: TelegramClient): Promise<Login
   const userId = me.id.toString();
   const sessionString = client.session.save() as unknown as string;
 
-  await db.read();
-  const existing = db.data!.users.find((u) => u.id === userId);
+  const existing = db.users.get(userId);
   if (existing) {
     existing.sessionString = encryptSession(sessionString);
+    db.users.save(existing);
   } else {
-    db.data!.users.push({
+    db.users.save({
       id: userId,
       phone,
       sessionString: encryptSession(sessionString),
       createdAt: Date.now(),
     });
     // give every new user a root folder
-    db.data!.folders.push({
+    db.folders.create({
       id: `root_${userId}`,
       parentId: null,
       name: "My Files",
       createdAt: Date.now(),
       locked: false,
     });
+    // Auto-provision the TeleCloud Drive forum supergroup in Telegram
+    getOrCreateForumSupergroup(client, userId).catch((err) => {
+      console.warn("Notice: could not auto-provision forum supergroup at login (will retry on first folder upload):", err?.message);
+    });
   }
-  await db.write();
 
   pendingLogins.delete(phone);
   activeClients.set(userId, client);
@@ -123,8 +127,7 @@ export async function getClientForUser(userId: string): Promise<TelegramClient> 
   const cached = activeClients.get(userId);
   if (cached && cached.connected) return cached;
 
-  await db.read();
-  const user = db.data!.users.find((u) => u.id === userId);
+  const user = db.users.get(userId);
   if (!user) throw new Error("User not found");
 
   const client = newClient(decryptSession(user.sessionString));

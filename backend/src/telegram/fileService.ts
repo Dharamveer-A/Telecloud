@@ -6,7 +6,7 @@ import { createReadStream, createWriteStream } from "fs";
 import path from "path";
 import crypto from "crypto";
 import { db, FileRecord, FileChunk } from "../db/db";
-import { getWritableModule, recordChunkStored, inputPeerFor, getInputPeerForChatId, invalidateModule } from "./storageManager";
+import { getWritableModule, recordChunkStored, inputPeerFor, getInputPeerForChatId, invalidateModule, getOrCreateForumSupergroup, createFolderTopic } from "./storageManager";
 import { encryptBuffer, decryptBuffer, encryptFile, decryptStream } from "../utils/crypto";
 
 const MAX_CHUNK = parseInt(process.env.MAX_TELEGRAM_FILE_BYTES || "500000000", 10);
@@ -58,6 +58,21 @@ export async function uploadFile(client: TelegramClient, opts: UploadOptions): P
     totalSize = (await fs.stat(filePath)).size;
   }
 
+  const folder = db.folders.get(folderId);
+  let forumMod: any;
+  try {
+    forumMod = await getOrCreateForumSupergroup(client, userId);
+    if (folder && folder.parentId && !folder.topicId) {
+      const topicId = await createFolderTopic(client, forumMod, folder.name);
+      if (topicId) {
+        db.folders.update(folder.id, { topicId });
+        folder.topicId = topicId;
+      }
+    }
+  } catch (err) {
+    console.error("Failed to setup forum supergroup or topic for upload:", err);
+  }
+
   const partsCount = Math.max(1, Math.ceil(totalSize / MAX_CHUNK));
   const chunks: FileChunk[] = [];
   
@@ -69,11 +84,11 @@ export async function uploadFile(client: TelegramClient, opts: UploadOptions): P
     const chunkPath = path.join(TMP_DIR, `${uuid()}.part`);
     await extractChunk(filePath, offset, length, chunkPath);
 
-    let mod = await getWritableModule(client, userId);
+    let targetMod = forumMod || (await getWritableModule(client, userId));
     let sent;
     try {
       const customFile = new CustomFile(`${filename}.part${i}`, length, chunkPath);
-      const sendParams = {
+      const sendParams: any = {
         file: customFile,
         forceDocument: true,
         caption: partsCount > 1 ? `${filename} (part ${i + 1}/${partsCount})` : filename,
@@ -84,13 +99,21 @@ export async function uploadFile(client: TelegramClient, opts: UploadOptions): P
         } : undefined,
       };
 
+      if (folder?.topicId) {
+        sendParams.replyTo = folder.topicId;
+      }
+
       try {
-        sent = await client.sendFile(inputPeerFor(mod), sendParams);
+        sent = await client.sendFile(inputPeerFor(targetMod), sendParams);
       } catch (err: any) {
-        if (err?.errorMessage === "CHANNEL_INVALID" || /CHANNEL_INVALID/i.test(err?.message || "")) {
-          await invalidateModule(mod.id);
-          mod = await getWritableModule(client, userId);
-          sent = await client.sendFile(inputPeerFor(mod), sendParams);
+        if (targetMod === forumMod) {
+          console.warn("Forum send failed, falling back to standard storage module:", err?.message);
+          targetMod = await getWritableModule(client, userId);
+          sent = await client.sendFile(inputPeerFor(targetMod), { ...sendParams, replyTo: undefined });
+        } else if (err?.errorMessage === "CHANNEL_INVALID" || /CHANNEL_INVALID/i.test(err?.message || "")) {
+          await invalidateModule(targetMod.id);
+          targetMod = await getWritableModule(client, userId);
+          sent = await client.sendFile(inputPeerFor(targetMod), sendParams);
         } else {
           throw err;
         }
@@ -100,13 +123,13 @@ export async function uploadFile(client: TelegramClient, opts: UploadOptions): P
     }
 
     chunks.push({
-      chatId: mod.chatId,
-      accessHash: mod.accessHash,
+      chatId: targetMod.chatId,
+      accessHash: targetMod.accessHash,
       messageId: (sent as any).id,
       partIndex: i,
       size: length,
     });
-    await recordChunkStored(mod.id);
+    await recordChunkStored(targetMod.id);
   }
   
   if (encPath) {
@@ -125,9 +148,7 @@ export async function uploadFile(client: TelegramClient, opts: UploadOptions): P
     iv,
   };
 
-  await db.read();
-  db.data!.files.push(record);
-  await db.write();
+  db.files.create(record);
   return record;
 }
 
