@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { transferStore, useTransfers } from "../lib/transfers";
+import { transferStore, useTransfers, useTransferViewMode } from "../lib/transfers";
 
 function formatBytes(n: number) {
   if (n < 1024) return `${n.toFixed(0)} B`;
@@ -23,10 +23,11 @@ function formatEta(s: number | null) {
 
 export default function TransfersPanel() {
   const transfers = useTransfers();
+  const viewMode = useTransferViewMode();
   const [collapsed, setCollapsed] = useState(false);
 
-  // If no transfers or docked into top-right toolbar, don't show the bottom floating panel
-  if (transfers.length === 0 || transferStore.isDocked()) return null;
+  // Only show the bottom floating panel when viewMode is explicitly "bottom"
+  if (transfers.length === 0 || viewMode !== "bottom") return null;
 
   const active = transfers.filter((t) => t.status === "active");
   const queued = transfers.filter((t) => t.status === "queued");
@@ -108,7 +109,7 @@ export default function TransfersPanel() {
           <button
             onClick={(e) => {
               e.stopPropagation();
-              transferStore.setDocked(true);
+              transferStore.setViewMode("minimized");
             }}
             className="text-dim hover:text-paper text-sm px-1.5 py-0.5 rounded hover:bg-surface2 transition-colors flex items-center justify-center font-bold"
             title="Minimize to top right toolbar (Brave-style)"

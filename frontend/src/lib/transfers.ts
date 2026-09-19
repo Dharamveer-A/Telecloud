@@ -3,6 +3,7 @@ import { TransferProgress } from "./api";
 
 export type TransferKind = "upload" | "download";
 export type TransferStatus = "queued" | "active" | "paused" | "done" | "error" | "cancelled";
+export type TransferViewMode = "bottom" | "top" | "minimized";
 
 export interface Transfer {
   id: string;
@@ -20,7 +21,7 @@ export interface Transfer {
 let transfers: Transfer[] = [];
 const listeners = new Set<() => void>();
 let autoClearTimeout: ReturnType<typeof setTimeout> | null = null;
-let docked = false;
+let viewMode: TransferViewMode = "bottom";
 
 function emit() {
   for (const l of listeners) l();
@@ -40,7 +41,7 @@ function checkAutoClear() {
     if (allDone) {
       autoClearTimeout = setTimeout(() => {
         transfers = [];
-        docked = false;
+        viewMode = "bottom";
         emit();
       }, 5000);
     }
@@ -58,15 +59,24 @@ export const transferStore = {
   get(id: string) {
     return transfers.find((t) => t.id === id);
   },
+  getViewMode(): TransferViewMode {
+    return viewMode;
+  },
+  setViewMode(mode: TransferViewMode) {
+    if (viewMode !== mode) {
+      viewMode = mode;
+      emit();
+    }
+  },
   isDocked() {
-    return docked;
+    return viewMode !== "bottom";
   },
   setDocked(val: boolean) {
-    docked = val;
+    viewMode = val ? "minimized" : "bottom";
     emit();
   },
   toggleDocked() {
-    docked = !docked;
+    viewMode = viewMode === "bottom" ? "minimized" : "bottom";
     emit();
   },
   isCancelled(id: string) {
@@ -88,7 +98,9 @@ export const transferStore = {
       clearTimeout(autoClearTimeout);
       autoClearTimeout = null;
     }
-    docked = false;
+    if (transfers.length === 0) {
+      viewMode = "bottom";
+    }
     const newTransfers: Transfer[] = items.map((item) => ({
       id: item.id,
       name: item.name,
@@ -107,7 +119,9 @@ export const transferStore = {
       clearTimeout(autoClearTimeout);
       autoClearTimeout = null;
     }
-    docked = false;
+    if (transfers.length === 0) {
+      viewMode = "bottom";
+    }
     transfers = [
       { id, name, kind, loaded: 0, total, bytesPerSecond: 0, etaSeconds: null, status: "queued" },
       ...transfers,
@@ -258,3 +272,8 @@ export const transferStore = {
 export function useTransfers(): Transfer[] {
   return useSyncExternalStore(transferStore.subscribe, transferStore.getSnapshot);
 }
+
+export function useTransferViewMode(): TransferViewMode {
+  return useSyncExternalStore(transferStore.subscribe, transferStore.getViewMode);
+}
+

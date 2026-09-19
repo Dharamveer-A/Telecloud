@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from "react";
-import { useTransfers, transferStore } from "../lib/transfers";
+import { useRef, useEffect } from "react";
+import { useTransfers, useTransferViewMode, transferStore } from "../lib/transfers";
 
 function formatBytes(n: number) {
   if (n < 1024) return `${n.toFixed(0)} B`;
@@ -23,13 +23,17 @@ function formatEta(s: number | null) {
 
 export default function TransfersTopButton() {
   const transfers = useTransfers();
-  const [showDropdown, setShowDropdown] = useState(false);
+  const viewMode = useTransferViewMode();
   const containerRef = useRef<HTMLDivElement>(null);
+
+  const showDropdown = viewMode === "top";
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setShowDropdown(false);
+        if (transferStore.getViewMode() === "top") {
+          transferStore.setViewMode("minimized");
+        }
       }
     }
     if (showDropdown) {
@@ -64,7 +68,13 @@ export default function TransfersTopButton() {
   return (
     <div className="relative" ref={containerRef}>
       <button
-        onClick={() => setShowDropdown((s) => !s)}
+        onClick={() => {
+          if (viewMode === "top") {
+            transferStore.setViewMode("minimized");
+          } else {
+            transferStore.setViewMode("top");
+          }
+        }}
         title={`Transfers: ${overallPct}% (${active.length} active, ${paused.length} paused, ${done.length} complete)`}
         className={`relative w-8 h-8 rounded-full flex items-center justify-center transition-all cursor-pointer ${
           showDropdown ? "bg-surface2 ring-2 ring-teal" : "hover:bg-surface2"
@@ -180,8 +190,7 @@ export default function TransfersTopButton() {
               {/* Undock to bottom button */}
               <button
                 onClick={() => {
-                  transferStore.setDocked(false);
-                  setShowDropdown(false);
+                  transferStore.setViewMode("bottom");
                 }}
                 className="text-dim hover:text-paper text-xs px-1.5 py-0.5 rounded hover:bg-surface transition-colors"
                 title="Pop out into bottom panel"
