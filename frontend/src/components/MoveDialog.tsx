@@ -51,9 +51,9 @@ export default function MoveDialog({
   const current = path[path.length - 1];
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-6">
-      <div className="bg-surface border border-line rounded w-full max-w-md">
-        <div className="px-6 py-4 border-b border-line">
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-4 sm:px-6">
+      <div className="bg-surface border border-line rounded-lg w-full max-w-md max-h-[92vh] flex flex-col overflow-hidden shadow-2xl">
+        <div className="px-5 sm:px-6 py-4 border-b border-line shrink-0">
           <h2 className="font-display text-lg text-paper">{title}</h2>
           <div className="flex items-center gap-1 text-xs mt-2 overflow-x-auto">
             {path.map((c, i) => (

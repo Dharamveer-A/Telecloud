@@ -33,6 +33,7 @@ export default function ShareModal({ item, folderPassword, onClose }: Props) {
   const [usePassword, setUsePassword] = useState(false);
   const [sharePassword, setSharePassword] = useState("");
   const [fPassword, setFPassword] = useState(folderPassword || "");
+  const [shareMode, setShareMode] = useState<"preview_and_zip" | "zip_only">("preview_and_zip");
 
   useEffect(() => {
     async function loadData() {
@@ -105,6 +106,7 @@ export default function ShareModal({ item, folderPassword, onClose }: Props) {
         expiresInHours: expiresIn,
         password: usePassword ? sharePassword.trim() : undefined,
         folderPassword: item.locked ? fPassword : undefined,
+        shareMode: item.kind === "folder" ? shareMode : undefined,
       });
       setExistingShare(res.share);
 
@@ -143,7 +145,7 @@ export default function ShareModal({ item, folderPassword, onClose }: Props) {
       onClick={onClose}
     >
       <div
-        className="bg-surface border border-line rounded-xl w-full max-w-lg p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-150"
+        className="bg-surface border border-line rounded-xl w-full max-w-lg p-5 sm:p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-150 max-h-[92vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between pb-3 border-b border-line mb-4">
@@ -289,6 +291,15 @@ export default function ShareModal({ item, folderPassword, onClose }: Props) {
                     : "Never"}
                 </span>
               </div>
+
+              {item.kind === "folder" && (
+                <div className="col-span-2 bg-surface2/40 border border-line/60 rounded-lg p-2.5 flex items-center justify-between">
+                  <span className="text-dim text-[11px]">Share Format</span>
+                  <span className="text-paper font-medium text-xs">
+                    {existingShare.shareMode === "zip_only" ? "🗜️ ZIP Download Only" : "👁️ Preview & ZIP"}
+                  </span>
+                </div>
+              )}
             </div>
 
             <div className="pt-2 flex items-center justify-between gap-3 border-t border-line mt-4">
@@ -335,6 +346,48 @@ export default function ShareModal({ item, folderPassword, onClose }: Props) {
                 </button>
               )}
             </div>
+
+            {item.kind === "folder" && (
+              <div>
+                <label className="text-xs font-semibold text-paper block mb-1.5">
+                  Folder Share Format
+                </label>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setShareMode("preview_and_zip")}
+                    className={`py-2 px-3 rounded border text-left transition-colors flex flex-col gap-0.5 ${
+                      shareMode === "preview_and_zip"
+                        ? "bg-teal/20 border-teal text-teal font-medium"
+                        : "bg-surface2 border-line text-dim hover:text-paper"
+                    }`}
+                  >
+                    <span className="font-semibold text-xs flex items-center gap-1.5">
+                      <span>👁️</span> Preview & ZIP
+                    </span>
+                    <span className="text-[10px] opacity-75">
+                      Recipients can browse files, preview media, & download ZIP
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShareMode("zip_only")}
+                    className={`py-2 px-3 rounded border text-left transition-colors flex flex-col gap-0.5 ${
+                      shareMode === "zip_only"
+                        ? "bg-teal/20 border-teal text-teal font-medium"
+                        : "bg-surface2 border-line text-dim hover:text-paper"
+                    }`}
+                  >
+                    <span className="font-semibold text-xs flex items-center gap-1.5">
+                      <span>🗜️</span> ZIP Only
+                    </span>
+                    <span className="text-[10px] opacity-75">
+                      Direct single-click ZIP archive download
+                    </span>
+                  </button>
+                </div>
+              </div>
+            )}
 
             <div>
               <label className="text-xs font-semibold text-paper block mb-1.5">

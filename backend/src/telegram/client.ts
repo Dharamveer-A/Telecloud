@@ -2,9 +2,12 @@ import { TelegramClient } from "telegram";
 import { StringSession } from "telegram/sessions";
 import { Api } from "telegram";
 import { computeCheck } from "telegram/Password";
+import { v4 as uuid } from "uuid";
+import bigInt from "big-integer";
+import { NewMessage, NewMessageEvent } from "telegram/events";
 import { encryptSession, decryptSession } from "../utils/crypto";
-import { db } from "../db/db";
-import { getOrCreateForumSupergroup } from "./storageManager";
+import { db, FileRecord, StorageModule } from "../db/db";
+import { getOrCreateForumSupergroup, inputPeerFor } from "./storageManager";
 
 const apiId = parseInt(process.env.TELEGRAM_API_ID || "0", 10);
 const apiHash = process.env.TELEGRAM_API_HASH || "";
@@ -119,13 +122,158 @@ async function finishLogin(phone: string, client: TelegramClient): Promise<Login
 
   pendingLogins.delete(phone);
   activeClients.set(userId, client);
+  startTelegramSyncListener(client, userId).catch(() => {});
   return { status: "ok", userId };
+}
+
+// Connected sync listeners per user
+const activeListeners = new Set<string>();
+
+export async function indexTelegramMessage(
+  client: TelegramClient,
+  userId: string,
+  forumMod: StorageModule,
+  msg: Api.Message,
+  defaultFolderId?: string
+): Promise<FileRecord | null> {
+  if (!msg.media) return null;
+
+  // Check if message is already indexed
+  const allFiles = db.files.allRaw();
+  const alreadyIndexed = allFiles.some(
+    (f) => f.telegramMessageId === msg.id || f.chunks?.some((c) => c.messageId === msg.id)
+  );
+  if (alreadyIndexed) return null;
+
+  let filename = `file_${msg.id}`;
+  let size = 0;
+  let mimeType = "application/octet-stream";
+
+  if (msg.media instanceof Api.MessageMediaDocument || (msg.media as any)?.className === "MessageMediaDocument") {
+    const doc = (msg.media as any).document;
+    if (doc instanceof Api.Document || doc?.className === "Document") {
+      size = (doc.size as any)?.toJSNumber ? (doc.size as any).toJSNumber() : Number(doc.size);
+      mimeType = doc.mimeType || "application/octet-stream";
+      const fnAttr = doc.attributes?.find(
+        (a: any) => a.className === "DocumentAttributeFilename"
+      ) as Api.DocumentAttributeFilename | undefined;
+      filename = fnAttr?.fileName || msg.message || `file_${msg.id}`;
+    }
+  } else if (msg.media instanceof Api.MessageMediaPhoto || (msg.media as any)?.className === "MessageMediaPhoto") {
+    mimeType = "image/jpeg";
+    filename = msg.message ? `${msg.message}.jpg` : `photo_${msg.id}.jpg`;
+    size = 1048576; // default 1MB if unknown
+    const photo = (msg.media as any).photo;
+    if ((photo instanceof Api.Photo || photo?.className === "Photo") && Array.isArray(photo.sizes)) {
+      const largest = photo.sizes[photo.sizes.length - 1];
+      if ((largest as any)?.size) {
+        size = (largest as any).size;
+      }
+    }
+  } else {
+    return null;
+  }
+
+  // Determine folder from topic ID
+  const replyToMsgId =
+    (msg.replyTo as any)?.replyToMsgId || (msg.replyTo as any)?.replyToTopId;
+  let folderId = defaultFolderId || `root_${userId}`;
+
+  if (replyToMsgId) {
+    const allFolders = db.folders.allRaw();
+    const matched = allFolders.find((f) => f.topicId === replyToMsgId);
+    if (matched) {
+      folderId = matched.id;
+    }
+  }
+
+  const record: FileRecord = {
+    id: uuid(),
+    folderId,
+    name: filename,
+    size,
+    mimeType,
+    chunks: [
+      {
+        chatId: forumMod.chatId,
+        accessHash: forumMod.accessHash,
+        messageId: msg.id,
+        partIndex: 0,
+        size,
+      },
+    ],
+    encrypted: false,
+    createdAt: (msg.date || Math.floor(Date.now() / 1000)) * 1000,
+    telegramMessageId: msg.id,
+  };
+
+  db.files.create(record);
+  console.log(`[TelegramSync] Indexed incoming file "${filename}" (${size} bytes) into folder ${folderId}`);
+  return record;
+}
+
+export async function syncTopicMessages(
+  client: TelegramClient,
+  userId: string,
+  folderId: string
+): Promise<{ importedCount: number; files: FileRecord[] }> {
+  const forumMod = await getOrCreateForumSupergroup(client, userId);
+  const folder = db.folders.get(folderId);
+  const peer = inputPeerFor(forumMod);
+
+  const getParams: any = { limit: 100 };
+  if (folder && folder.topicId) {
+    getParams.replyTo = folder.topicId;
+  }
+
+  const messages = await client.getMessages(peer, getParams);
+  const imported: FileRecord[] = [];
+
+  for (const msg of messages) {
+    if (msg instanceof Api.Message && msg.media) {
+      const rec = await indexTelegramMessage(client, userId, forumMod, msg, folderId);
+      if (rec) {
+        imported.push(rec);
+      }
+    }
+  }
+
+  return { importedCount: imported.length, files: imported };
+}
+
+export async function startTelegramSyncListener(
+  client: TelegramClient,
+  userId: string
+): Promise<void> {
+  if (activeListeners.has(userId)) return;
+
+  try {
+    const forumMod = await getOrCreateForumSupergroup(client, userId);
+    activeListeners.add(userId);
+
+    client.addEventHandler(async (event: NewMessageEvent) => {
+      try {
+        const msg = event.message;
+        if (!msg || !msg.media) return;
+        await indexTelegramMessage(client, userId, forumMod, msg);
+      } catch (err: any) {
+        console.warn("[TelegramSync] Error handling incoming message:", err?.message);
+      }
+    }, new NewMessage({ chats: [bigInt(forumMod.chatId)] }));
+
+    console.log(`[TelegramSync] Live message listener active for user ${userId} on forum supergroup ${forumMod.chatId}`);
+  } catch (err: any) {
+    console.warn(`[TelegramSync] Could not start listener for user ${userId}:`, err?.message);
+  }
 }
 
 // Get (or reconnect) the live client for an already-logged-in user.
 export async function getClientForUser(userId: string): Promise<TelegramClient> {
   const cached = activeClients.get(userId);
-  if (cached && cached.connected) return cached;
+  if (cached && cached.connected) {
+    startTelegramSyncListener(cached, userId).catch(() => {});
+    return cached;
+  }
 
   const user = db.users.get(userId);
   if (!user) throw new Error("User not found");
@@ -133,5 +281,6 @@ export async function getClientForUser(userId: string): Promise<TelegramClient> 
   const client = newClient(decryptSession(user.sessionString));
   await client.connect();
   activeClients.set(userId, client);
+  startTelegramSyncListener(client, userId).catch(() => {});
   return client;
 }

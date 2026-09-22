@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, setToken } from "../lib/api";
 import { COUNTRIES, Country, detectCountry } from "../lib/countries";
+import ThemeToggle from "../components/ThemeToggle";
 
 type Step = "phone" | "code" | "password";
 
@@ -150,7 +151,10 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-6">
+    <div className="min-h-screen flex items-center justify-center px-6 relative">
+      <div className="absolute top-6 right-6">
+        <ThemeToggle compact />
+      </div>
       <div className="w-full max-w-sm">
         <div className="mb-10">
           <h1 className="font-display text-4xl text-paper mb-2">TeleCloud</h1>

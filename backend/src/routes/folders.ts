@@ -1,12 +1,13 @@
 import { Router } from "express";
 import { v4 as uuid } from "uuid";
 import archiver from "archiver";
+import { PassThrough } from "stream";
 import { db, FolderRecord } from "../db/db";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { hashFolderPassword, verifyFolderPassword, deriveFolderFileKey } from "../utils/crypto";
-import { getClientForUser } from "../telegram/client";
+import { getClientForUser, syncTopicMessages } from "../telegram/client";
 import { downloadFile, streamFileToResponse } from "../telegram/fileService";
-import { getOrCreateForumSupergroup, createFolderTopic, editFolderTopic } from "../telegram/storageManager";
+import { getOrCreateForumSupergroup, createFolderTopic, editFolderTopic, moveFileToTrash } from "../telegram/storageManager";
 
 const router = Router();
 router.use(requireAuth);
@@ -145,8 +146,49 @@ router.post("/:folderId/unlock", async (req: AuthedRequest, res) => {
   res.json({ ok: true });
 });
 
+router.post("/:folderId/sync", async (req: AuthedRequest, res) => {
+  const folderId = req.params.folderId;
+  const userId = req.userId!;
+
+  try {
+    const client = await getClientForUser(userId);
+    const result = await syncTopicMessages(client, userId, folderId);
+    res.json({ ok: true, importedCount: result.importedCount, files: result.files });
+  } catch (err: any) {
+    console.error(`[Sync] Failed to sync folder ${folderId}:`, err);
+    res.status(500).json({ error: err.message || "Failed to sync folder with Telegram" });
+  }
+});
+
 router.delete("/:folderId", async (req: AuthedRequest, res) => {
-  db.folders.softDelete(req.params.folderId);
+  const folderId = req.params.folderId;
+  const userId = req.userId!;
+
+  try {
+    const client = await getClientForUser(userId);
+    const allFoldersRaw = db.folders.allRaw();
+    const toDelete = new Set<string>([folderId]);
+    const queue = [folderId];
+    while (queue.length > 0) {
+      const curr = queue.shift()!;
+      for (const f of allFoldersRaw) {
+        if (f.parentId === curr && !toDelete.has(f.id)) {
+          toDelete.add(f.id);
+          queue.push(f.id);
+        }
+      }
+    }
+    for (const fId of toDelete) {
+      const files = db.files.byFolder(fId);
+      for (const file of files) {
+        await moveFileToTrash(client, userId, file).catch(() => {});
+      }
+    }
+  } catch (err: any) {
+    console.warn("Failed to move folder files to Telegram trash channel:", err?.message);
+  }
+
+  db.folders.softDelete(folderId);
   res.json({ ok: true });
 });
 
@@ -241,12 +283,14 @@ router.get("/:folderId/download-zip", async (req: AuthedRequest, res) => {
     const files = db.files.byFolder(folder.id);
     for (const file of files) {
       const fileKey = file.encrypted && password ? deriveFolderFileKey(password, folder.salt!) : undefined;
+      const pt = new PassThrough();
+      archive.append(pt, { name: `${zipPath}/${file.name}` });
       try {
-        const { PassThrough } = require("stream");
-        const pt = new PassThrough();
-        archive.append(pt, { name: `${zipPath}/${file.name}` });
         await streamFileToResponse(client, file, pt, fileKey);
       } catch (err: any) {
+        try {
+          pt.end();
+        } catch {}
         archive.append(`Could not include this file: ${err.message}`, { name: `${zipPath}/${file.name}.error.txt` });
       }
     }

@@ -1,6 +1,6 @@
 import { TelegramClient, Api } from "telegram";
 import bigInt from "big-integer";
-import { db, StorageModule } from "../db/db";
+import { db, StorageModule, FileRecord, FolderRecord } from "../db/db";
 
 const ROTATE_AFTER = parseInt(process.env.MODULE_ROTATE_AFTER_FILES || "2000", 10);
 
@@ -216,3 +216,175 @@ export async function recordChunkStored(moduleId: string) {
 export async function invalidateModule(moduleId: string) {
   db.modules.setCount(moduleId, ROTATE_AFTER);
 }
+
+export async function getOrCreateTrashChannel(client: TelegramClient, userId: string): Promise<StorageModule> {
+  const userModules = db.modules.byUser(userId);
+  const existing = userModules.find((m) => m.id.includes("_trash_"));
+  if (existing) return existing;
+
+  const result = await client.invoke(
+    new Api.channels.CreateChannel({
+      title: "TeleCloud Trash",
+      about: "TeleCloud Trash - Deleted files from your drive are kept here. Managed by TeleCloud.",
+      megagroup: false,
+      broadcast: true,
+    })
+  );
+
+  const chats = (result as any).chats as Api.Channel[];
+  const channel = chats[0];
+  const mod: StorageModule = {
+    id: `u${userId}_trash_${channel.id.toString()}`,
+    chatId: channel.id.toString(),
+    accessHash: channel.accessHash!.toString(),
+    fileCount: 0,
+    createdAt: Date.now(),
+  };
+
+  db.modules.create(mod);
+  return mod;
+}
+
+export async function moveFileToTrash(
+  client: TelegramClient,
+  userId: string,
+  file: FileRecord
+): Promise<void> {
+  if (!file.chunks || file.chunks.length === 0) return;
+
+  const trashMod = await getOrCreateTrashChannel(client, userId);
+  const trashPeer = inputPeerFor(trashMod);
+
+  const updatedChunks = [...file.chunks];
+  for (let i = 0; i < updatedChunks.length; i++) {
+    const chunk = updatedChunks[i];
+    try {
+      const fromPeer = new Api.InputPeerChannel({
+        channelId: bigInt(chunk.chatId),
+        accessHash: bigInt(chunk.accessHash),
+      });
+
+      const forwarded = await client.forwardMessages(trashPeer, {
+        messages: [chunk.messageId],
+        fromPeer,
+        dropAuthor: true,
+      });
+
+      const newMsgId = forwarded[0]?.id;
+      if (newMsgId) {
+        // Delete original message from active channel/forum
+        await client.deleteMessages(fromPeer, [chunk.messageId], { revoke: true }).catch(() => {});
+        updatedChunks[i] = {
+          ...chunk,
+          chatId: trashMod.chatId,
+          accessHash: trashMod.accessHash,
+          messageId: newMsgId,
+        };
+      }
+    } catch (err: any) {
+      console.warn(`[moveFileToTrash] Failed to move chunk ${chunk.messageId} to trash:`, err?.message);
+    }
+  }
+
+  db.files.update(file.id, {
+    chunks: updatedChunks,
+    telegramMessageId: updatedChunks[0]?.messageId,
+  });
+  file.chunks = updatedChunks;
+  file.telegramMessageId = updatedChunks[0]?.messageId;
+}
+
+export async function restoreFileFromTrash(
+  client: TelegramClient,
+  userId: string,
+  file: FileRecord,
+  targetFolder?: FolderRecord
+): Promise<void> {
+  if (!file.chunks || file.chunks.length === 0) return;
+
+  const forumMod = await getOrCreateForumSupergroup(client, userId);
+  const drivePeer = inputPeerFor(forumMod);
+
+  const updatedChunks = [...file.chunks];
+  for (let i = 0; i < updatedChunks.length; i++) {
+    const chunk = updatedChunks[i];
+    try {
+      const trashPeer = new Api.InputPeerChannel({
+        channelId: bigInt(chunk.chatId),
+        accessHash: bigInt(chunk.accessHash),
+      });
+
+      let sentMsgId: number | undefined;
+      if (targetFolder?.topicId) {
+        try {
+          const res = await client.invoke(
+            new Api.messages.ForwardMessages({
+              fromPeer: trashPeer,
+              id: [chunk.messageId],
+              toPeer: drivePeer,
+              topMsgId: targetFolder.topicId,
+              dropAuthor: true,
+              randomId: [bigInt.randBetween(bigInt(1), bigInt("9223372036854775807"))],
+            })
+          );
+          const updates = (res as any).updates || [];
+          for (const u of updates) {
+            if (u.message?.id) {
+              sentMsgId = u.message.id;
+              break;
+            }
+          }
+        } catch {}
+      }
+
+      if (!sentMsgId) {
+        const forwarded = await client.forwardMessages(drivePeer, {
+          messages: [chunk.messageId],
+          fromPeer: trashPeer,
+          dropAuthor: true,
+        });
+        sentMsgId = forwarded[0]?.id;
+      }
+
+      if (sentMsgId) {
+        // Delete message from trash channel
+        await client.deleteMessages(trashPeer, [chunk.messageId], { revoke: true }).catch(() => {});
+        updatedChunks[i] = {
+          ...chunk,
+          chatId: forumMod.chatId,
+          accessHash: forumMod.accessHash,
+          messageId: sentMsgId,
+        };
+      }
+    } catch (err: any) {
+      console.warn(`[restoreFileFromTrash] Failed to restore chunk ${chunk.messageId} from trash:`, err?.message);
+    }
+  }
+
+  db.files.update(file.id, {
+    chunks: updatedChunks,
+    telegramMessageId: updatedChunks[0]?.messageId,
+  });
+  file.chunks = updatedChunks;
+  file.telegramMessageId = updatedChunks[0]?.messageId;
+}
+
+export async function purgeFileFromTelegram(
+  client: TelegramClient,
+  file: FileRecord
+): Promise<void> {
+  if (!file.chunks || file.chunks.length === 0) return;
+
+  for (const chunk of file.chunks) {
+    try {
+      const peer = new Api.InputPeerChannel({
+        channelId: bigInt(chunk.chatId),
+        accessHash: bigInt(chunk.accessHash),
+      });
+      await client.deleteMessages(peer, [chunk.messageId], { revoke: true });
+    } catch (err: any) {
+      console.warn(`[purgeFileFromTelegram] Failed to delete chunk message ${chunk.messageId}:`, err?.message);
+    }
+  }
+}
+

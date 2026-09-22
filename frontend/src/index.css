@@ -2,11 +2,220 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --color-ink: 20 23 28;
+  --color-surface: 28 32 41;
+  --color-surface2: 36 41 53;
+  --color-line: 46 53 66;
+  --color-paper: 232 230 223;
+  --color-dim: 139 147 163;
+  --color-brass: 201 162 75;
+  --color-teal: 79 163 160;
+  --color-danger: 196 99 79;
+  scrollbar-color: #2E3542 #14171C;
+  color-scheme: dark;
+}
+
+:root[data-theme="light"],
+[data-theme="light"],
+html.light,
+.light {
+  --color-ink: 245 246 248;
+  --color-surface: 255 255 255;
+  --color-surface2: 234 236 239;
+  --color-line: 221 225 230;
+  --color-paper: 17 24 39;
+  --color-dim: 100 116 139;
+  --color-brass: 180 130 40;
+  --color-teal: 47 126 123;
+  --color-danger: 211 47 47;
+  scrollbar-color: #DDE1E6 #F5F6F8;
+  color-scheme: light;
+}
+
+:root[data-theme="dark"],
+[data-theme="dark"],
+html.dark,
+.dark {
+  --color-ink: 20 23 28;
+  --color-surface: 28 32 41;
+  --color-surface2: 36 41 53;
+  --color-line: 46 53 66;
+  --color-paper: 232 230 223;
+  --color-dim: 139 147 163;
+  --color-brass: 201 162 75;
+  --color-teal: 79 163 160;
+  --color-danger: 196 99 79;
+  scrollbar-color: #2E3542 #14171C;
+  color-scheme: dark;
+}
+
 * {
   scrollbar-width: thin;
-  scrollbar-color: #2E3542 #14171C;
 }
 
 body {
   -webkit-font-smoothing: antialiased;
+  background-color: rgb(var(--color-ink));
+  color: rgb(var(--color-paper));
 }
+
+/* ==========================================================================
+   DIRECT LIGHT THEME OVERRIDES
+   Guarantees immediate styling across dev server HMR and Tailwind class maps
+   ========================================================================== */
+
+[data-theme="light"],
+html.light {
+  color-scheme: light;
+  background-color: #F5F6F8 !important;
+  color: #111827 !important;
+}
+
+[data-theme="light"] body,
+html.light body {
+  background-color: #F5F6F8 !important;
+  color: #111827 !important;
+}
+
+[data-theme="light"] .bg-ink,
+html.light .bg-ink {
+  background-color: #F5F6F8 !important;
+}
+
+[data-theme="light"] .bg-surface,
+html.light .bg-surface {
+  background-color: #FFFFFF !important;
+}
+
+[data-theme="light"] .bg-surface\/95,
+html.light .bg-surface\/95 {
+  background-color: rgba(255, 255, 255, 0.95) !important;
+}
+
+[data-theme="light"] .bg-surface\/80,
+html.light .bg-surface\/80 {
+  background-color: rgba(255, 255, 255, 0.8) !important;
+}
+
+[data-theme="light"] .bg-surface\/50,
+html.light .bg-surface\/50 {
+  background-color: rgba(255, 255, 255, 0.5) !important;
+}
+
+[data-theme="light"] .bg-line,
+html.light .bg-line {
+  background-color: #DDE1E6 !important;
+}
+
+[data-theme="light"] .bg-ink\/90,
+html.light .bg-ink\/90 {
+  background-color: rgba(245, 246, 248, 0.9) !important;
+}
+
+[data-theme="light"] .border-line\/60,
+html.light .border-line\/60 {
+  border-color: rgba(221, 225, 230, 0.6) !important;
+}
+
+[data-theme="light"] .divide-line\/40 > :not([hidden]) ~ :not([hidden]),
+html.light .divide-line\/40 > :not([hidden]) ~ :not([hidden]) {
+  border-color: rgba(221, 225, 230, 0.4) !important;
+}
+
+[data-theme="light"] .divide-line\/30 > :not([hidden]) ~ :not([hidden]),
+html.light .divide-line\/30 > :not([hidden]) ~ :not([hidden]) {
+  border-color: rgba(221, 225, 230, 0.3) !important;
+}
+
+[data-theme="light"] .bg-surface2,
+html.light .bg-surface2 {
+  background-color: #EAECEF !important;
+}
+
+[data-theme="light"] .bg-surface2\/30,
+html.light .bg-surface2\/30 {
+  background-color: rgba(234, 236, 239, 0.3) !important;
+}
+
+[data-theme="light"] .bg-surface2\/40,
+html.light .bg-surface2\/40 {
+  background-color: rgba(234, 236, 239, 0.4) !important;
+}
+
+[data-theme="light"] .bg-surface2\/50,
+html.light .bg-surface2\/50 {
+  background-color: rgba(234, 236, 239, 0.5) !important;
+}
+
+[data-theme="light"] .bg-surface2\/60,
+html.light .bg-surface2\/60 {
+  background-color: rgba(234, 236, 239, 0.6) !important;
+}
+
+[data-theme="light"] .bg-surface2\/80,
+html.light .bg-surface2\/80 {
+  background-color: rgba(234, 236, 239, 0.8) !important;
+}
+
+[data-theme="light"] .hover\:bg-surface:hover,
+html.light .hover\:bg-surface:hover {
+  background-color: #F1F3F5 !important;
+}
+
+[data-theme="light"] .hover\:bg-surface2:hover,
+html.light .hover\:bg-surface2:hover {
+  background-color: #E2E5E9 !important;
+}
+
+[data-theme="light"] .hover\:bg-surface2\/60:hover,
+html.light .hover\:bg-surface2\/60:hover {
+  background-color: rgba(226, 229, 233, 0.6) !important;
+}
+
+[data-theme="light"] .hover\:bg-surface2\/80:hover,
+html.light .hover\:bg-surface2\/80:hover {
+  background-color: rgba(226, 229, 233, 0.8) !important;
+}
+
+[data-theme="light"] .border-line,
+html.light .border-line {
+  border-color: #DDE1E6 !important;
+}
+
+[data-theme="light"] .divide-line > :not([hidden]) ~ :not([hidden]),
+html.light .divide-line > :not([hidden]) ~ :not([hidden]) {
+  border-color: #DDE1E6 !important;
+}
+
+[data-theme="light"] .text-paper,
+html.light .text-paper {
+  color: #111827 !important;
+}
+
+[data-theme="light"] .text-dim,
+html.light .text-dim {
+  color: #64748B !important;
+}
+
+[data-theme="light"] .hover\:text-paper:hover,
+html.light .hover\:text-paper:hover {
+  color: #000000 !important;
+}
+
+[data-theme="light"] input,
+html.light input,
+[data-theme="light"] select,
+html.light select,
+[data-theme="light"] textarea,
+html.light textarea {
+  color: #111827 !important;
+}
+
+[data-theme="light"] input::placeholder,
+html.light input::placeholder,
+[data-theme="light"] textarea::placeholder,
+html.light textarea::placeholder {
+  color: #94A3B8 !important;
+}
+

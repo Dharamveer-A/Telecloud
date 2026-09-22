@@ -46,8 +46,8 @@ export default function PreviewModal({
   }, [file.id]);
 
   return (
-    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-6" onClick={onClose}>
-      <div className="max-w-4xl w-full max-h-full flex flex-col items-center" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-3 sm:p-6" onClick={onClose}>
+      <div className="max-w-4xl w-full max-h-[92vh] flex flex-col items-center overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="w-full flex items-center justify-between mb-3">
           <span className="text-paper text-sm truncate">{file.name}</span>
           <div className="flex gap-3 items-center">

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { api, saveBlob, TransferProgress } from "../lib/api";
+import ThemeToggle from "../components/ThemeToggle";
 
 function formatBytes(n: number) {
   if (!n || n < 1024) return `${n || 0} B`;
@@ -25,6 +26,49 @@ function iconFor(mime?: string, isFolder?: boolean) {
   return "📦";
 }
 
+function PublicFileThumbnail({
+  token,
+  fileId,
+  mimeType,
+  password,
+}: {
+  token: string;
+  fileId: string;
+  mimeType: string;
+  password?: string;
+}) {
+  const isImage = mimeType?.startsWith("image/");
+  const isVideo = mimeType?.startsWith("video/");
+  if (!isImage && !isVideo) return <span className="text-2xl">{iconFor(mimeType)}</span>;
+
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState(false);
+  const url = api.publicShareThumbnailUrl(token, fileId, password);
+
+  if (error) return <span className="text-2xl">{iconFor(mimeType)}</span>;
+
+  return (
+    <div className="w-full h-full relative flex items-center justify-center overflow-hidden bg-surface2/40">
+      <img
+        src={url}
+        alt=""
+        loading="lazy"
+        onLoad={() => setLoaded(true)}
+        onError={() => setError(true)}
+        className={`w-full h-full object-cover transition-opacity duration-200 ${
+          loaded ? "opacity-100" : "opacity-0"
+        }`}
+      />
+      {isVideo && loaded && (
+        <div className="absolute bottom-1 right-1 bg-black/70 backdrop-blur-sm text-white text-[9px] px-1.5 py-0.5 rounded flex items-center gap-0.5 font-medium pointer-events-none shadow">
+          <span>▶</span>
+        </div>
+      )}
+      {!loaded && <div className="absolute inset-0 bg-surface2/50 animate-pulse" />}
+    </div>
+  );
+}
+
 export default function PublicShare() {
   const { token } = useParams<{ token: string }>();
   const [loading, setLoading] = useState(true);
@@ -38,10 +82,37 @@ export default function PublicShare() {
   const [verifying, setVerifying] = useState(false);
   const [passwordError, setPasswordError] = useState("");
 
+interface DownloadProgressState extends TransferProgress {
+  percent: number;
+  speed: string;
+}
+
   // Download state
   const [downloading, setDownloading] = useState(false);
-  const [downloadProgress, setDownloadProgress] = useState<TransferProgress | null>(null);
+  const [downloadProgress, setDownloadProgress] = useState<DownloadProgressState | null>(null);
   const [copied, setCopied] = useState(false);
+
+  // Folder contents & browsing
+  const [currentFolderId, setCurrentFolderId] = useState<string | undefined>(undefined);
+  const [folderContents, setFolderContents] = useState<{
+    currentFolder: { id: string; name: string; isRoot: boolean };
+    breadcrumbs: { id: string; name: string }[];
+    subfolders: any[];
+    files: any[];
+  } | null>(null);
+  const [contentsLoading, setContentsLoading] = useState(false);
+  const [contentsError, setContentsError] = useState<string | null>(null);
+
+  // File preview modal
+  const [previewFile, setPreviewFile] = useState<{
+    id: string;
+    name: string;
+    mimeType: string;
+    size: number;
+  } | null>(null);
+
+  // View mode
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
 
   useEffect(() => {
     if (!token) return;
@@ -68,6 +139,28 @@ export default function PublicShare() {
     load();
   }, [token]);
 
+  // Fetch folder contents when unlocked and target is a folder with preview enabled
+  useEffect(() => {
+    if (!token || !unlocked || shareData?.targetType !== "folder" || shareData?.shareMode === "zip_only") return;
+    let active = true;
+    async function fetchContents() {
+      setContentsLoading(true);
+      setContentsError(null);
+      try {
+        const data = await api.getPublicShareContents(token!, currentFolderId, password || undefined);
+        if (active) setFolderContents(data);
+      } catch (err: any) {
+        if (active) setContentsError(err.message || "Failed to load folder contents");
+      } finally {
+        if (active) setContentsLoading(false);
+      }
+    }
+    fetchContents();
+    return () => {
+      active = false;
+    };
+  }, [token, unlocked, currentFolderId, shareData?.targetType, shareData?.shareMode, password]);
+
   const handleVerifyPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!token || !password) return;
@@ -90,21 +183,34 @@ export default function PublicShare() {
     });
   };
 
-  const handleDownload = async () => {
+  const handleDownloadZip = async (targetFolderId?: string, folderName?: string) => {
     if (!token || !shareData) return;
     setDownloading(true);
-    setDownloadProgress({ loaded: 0, total: shareData.size || 0, percent: 0, speed: "0 B/s" });
+    const targetSize = shareData.totalSize || shareData.size || 0;
+    setDownloadProgress({
+      loaded: 0,
+      total: targetSize,
+      bytesPerSecond: 0,
+      etaSeconds: null,
+      percent: 0,
+      speed: "0 B/s",
+    });
 
     try {
-      const filename =
-        shareData.targetType === "folder"
-          ? `${shareData.name}.zip`
-          : shareData.name;
+      const filename = `${folderName || folderContents?.currentFolder?.name || shareData.name}.zip`;
 
       const blob = await api.downloadPublicShareWithProgress(
         token,
         password || undefined,
-        (p) => setDownloadProgress(p)
+        (p) => {
+          const percent = p.total > 0 ? Math.min(100, Math.round((p.loaded / p.total) * 100)) : 0;
+          setDownloadProgress({
+            ...p,
+            percent,
+            speed: `${formatBytes(p.bytesPerSecond)}/s`,
+          });
+        },
+        targetFolderId || currentFolderId
       );
 
       saveBlob(blob, filename);
@@ -116,20 +222,34 @@ export default function PublicShare() {
     }
   };
 
+  const handleDownloadSingleFile = (file: { id: string; name: string }) => {
+    if (!token) return;
+    const url = api.publicShareFileUrl(token, file.id, password || undefined, true);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = file.name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+
   const isVideo = shareData?.mimeType?.startsWith("video/");
   const isAudio = shareData?.mimeType?.startsWith("audio/");
   const isImage = shareData?.mimeType?.startsWith("image/");
   const isPdf = shareData?.mimeType === "application/pdf";
-  const canPreview = unlocked && shareData?.targetType === "file" && (isVideo || isAudio || isImage || isPdf);
+  const canPreviewSingleFile = unlocked && shareData?.targetType === "file" && (isVideo || isAudio || isImage || isPdf);
 
   const mediaStreamUrl =
     token && unlocked
       ? api.publicShareDownloadUrl(token, password || undefined, false)
       : "";
 
+  const isFolderWithPreview =
+    shareData?.targetType === "folder" && shareData?.shareMode !== "zip_only";
+
   return (
     <div className="min-h-screen bg-ink text-paper flex flex-col selection:bg-teal selection:text-ink font-sans">
-      {/* Header */}
+      {/* Top Header */}
       <header className="border-b border-line bg-surface/50 backdrop-blur sticky top-0 z-30 px-6 py-3.5 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <span className="text-xl">☁️</span>
@@ -140,18 +260,33 @@ export default function PublicShare() {
             Shared Link
           </span>
         </div>
-        <button
-          onClick={handleCopyLink}
-          className="text-xs text-dim hover:text-paper bg-surface2 hover:bg-surface border border-line rounded px-3 py-1.5 transition-colors flex items-center gap-1.5 font-medium"
-        >
-          <span>{copied ? "✓" : "🔗"}</span>
-          <span>{copied ? "Link Copied!" : "Copy Link"}</span>
-        </button>
+        <div className="flex items-center gap-2">
+          {isFolderWithPreview && unlocked && (
+            <button
+              onClick={() => handleDownloadZip()}
+              disabled={downloading}
+              className="text-xs bg-teal text-ink font-semibold rounded px-3 py-1.5 hover:opacity-90 transition-opacity flex items-center gap-1.5 shadow-sm"
+              title="Download entire folder as a ZIP archive"
+            >
+              <span>⬇️</span>
+              <span className="hidden sm:inline">Download as ZIP</span>
+              <span className="sm:hidden">ZIP</span>
+            </button>
+          )}
+          <button
+            onClick={handleCopyLink}
+            className="text-xs text-dim hover:text-paper bg-surface2 hover:bg-surface border border-line rounded px-3 py-1.5 transition-colors flex items-center gap-1.5 font-medium"
+          >
+            <span>{copied ? "✓" : "🔗"}</span>
+            <span>{copied ? "Copied!" : "Copy Link"}</span>
+          </button>
+          <ThemeToggle compact />
+        </div>
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 flex items-center justify-center p-6">
-        <div className="w-full max-w-2xl">
+      <main className="flex-1 flex items-center justify-center p-4 sm:p-6">
+        <div className={`w-full ${isFolderWithPreview && unlocked ? "max-w-5xl" : "max-w-2xl"}`}>
           {loading ? (
             <div className="bg-surface border border-line rounded-2xl p-12 text-center shadow-2xl space-y-4">
               <div className="w-10 h-10 border-2 border-teal border-t-transparent rounded-full animate-spin mx-auto" />
@@ -174,7 +309,7 @@ export default function PublicShare() {
               </div>
               <h1 className="font-display text-2xl font-bold text-paper">Item Not Found</h1>
               <p className="text-sm text-dim max-w-md mx-auto">
-                {error}. This link may have been revoked or the file may have been moved or deleted.
+                {error}. This link may have been revoked or the item may have been moved or deleted.
               </p>
             </div>
           ) : !unlocked ? (
@@ -224,8 +359,273 @@ export default function PublicShare() {
                 </button>
               </form>
             </div>
+          ) : isFolderWithPreview ? (
+            /* ========================================================= */
+            /* FOLDER PREVIEW & BROWSER VIEW (With ZIP download option)   */
+            /* ========================================================= */
+            <div className="bg-surface border border-line rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+              {/* Folder Header & Breadcrumbs */}
+              <div className="p-6 border-b border-line bg-surface2/40 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <span className="text-3xl">📁</span>
+                    <div>
+                      <h1 className="font-display text-xl sm:text-2xl font-bold text-paper">
+                        {folderContents?.currentFolder?.name || shareData.name}
+                      </h1>
+                      <p className="text-xs text-dim mt-0.5">
+                        {shareData.fileCount || 0} files • {formatBytes(shareData.totalSize || 0)}
+                        {shareData.folderCount > 0 && ` • ${shareData.folderCount} subfolders`}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleDownloadZip()}
+                      disabled={downloading}
+                      className="bg-teal hover:opacity-90 disabled:opacity-50 text-ink font-semibold rounded-xl py-2.5 px-4 text-xs flex items-center gap-2 transition-all shadow-md shadow-teal/10"
+                    >
+                      <span>⬇️</span>
+                      <span>Download as ZIP</span>
+                      <span className="opacity-75 text-[11px] font-normal">
+                        ({formatBytes(shareData.totalSize)})
+                      </span>
+                    </button>
+
+                    {/* View mode toggle */}
+                    <div className="flex items-center border border-line rounded-lg overflow-hidden bg-surface">
+                      <button
+                        onClick={() => setViewMode("grid")}
+                        className={`p-2 text-xs transition-colors ${
+                          viewMode === "grid" ? "bg-teal/20 text-teal font-bold" : "text-dim hover:text-paper"
+                        }`}
+                        title="Grid view"
+                      >
+                        ⊞
+                      </button>
+                      <button
+                        onClick={() => setViewMode("list")}
+                        className={`p-2 text-xs transition-colors ${
+                          viewMode === "list" ? "bg-teal/20 text-teal font-bold" : "text-dim hover:text-paper"
+                        }`}
+                        title="List view"
+                      >
+                        ☰
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Breadcrumbs Navigation */}
+                {folderContents?.breadcrumbs && folderContents.breadcrumbs.length > 1 && (
+                  <div className="flex items-center gap-1.5 text-xs text-dim overflow-x-auto py-1">
+                    {folderContents.breadcrumbs.map((crumb, idx) => {
+                      const isLast = idx === folderContents.breadcrumbs.length - 1;
+                      return (
+                        <React.Fragment key={crumb.id}>
+                          {idx > 0 && <span className="opacity-50">/</span>}
+                          {isLast ? (
+                            <span className="text-paper font-semibold">{crumb.name}</span>
+                          ) : (
+                            <button
+                              onClick={() => setCurrentFolderId(idx === 0 ? undefined : crumb.id)}
+                              className="text-teal hover:underline font-medium truncate max-w-[140px]"
+                            >
+                              {crumb.name}
+                            </button>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Download Progress Bar */}
+              {downloading && downloadProgress && (
+                <div className="bg-surface2 border-b border-line p-4 space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-semibold text-paper flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-teal animate-pulse" />
+                      Creating and downloading ZIP archive...
+                    </span>
+                    <div className="flex items-center gap-3 text-dim font-mono">
+                      <span>{downloadProgress.speed}</span>
+                      <span>{downloadProgress.percent}%</span>
+                    </div>
+                  </div>
+                  <div className="w-full h-2 bg-surface rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-teal transition-all duration-200"
+                      style={{ width: `${downloadProgress.percent}%` }}
+                    />
+                  </div>
+                  <div className="text-[11px] text-dim flex justify-between">
+                    <span>{formatBytes(downloadProgress.loaded)}</span>
+                    <span>{formatBytes(downloadProgress.total)}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Folder Browser Contents */}
+              <div className="p-6 min-h-[300px]">
+                {contentsLoading ? (
+                  <div className="py-16 text-center text-dim text-sm space-y-3">
+                    <div className="w-8 h-8 border-2 border-teal border-t-transparent rounded-full animate-spin mx-auto" />
+                    <p>Loading files & folders...</p>
+                  </div>
+                ) : contentsError ? (
+                  <div className="py-12 text-center text-danger text-sm">
+                    {contentsError}
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    {/* Subfolders Section */}
+                    {folderContents?.subfolders && folderContents.subfolders.length > 0 && (
+                      <div className="space-y-2.5">
+                        <h2 className="text-xs font-semibold uppercase tracking-wider text-dim">
+                          Folders ({folderContents.subfolders.length})
+                        </h2>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                          {folderContents.subfolders.map((sub) => (
+                            <div
+                              key={sub.id}
+                              onClick={() => setCurrentFolderId(sub.id)}
+                              className="bg-surface2/50 hover:bg-surface2 border border-line rounded-xl p-3.5 flex items-center justify-between cursor-pointer transition-all hover:border-teal/50 group"
+                            >
+                              <div className="flex items-center gap-3 min-w-0">
+                                <span className="text-2xl group-hover:scale-110 transition-transform">📁</span>
+                                <div className="min-w-0">
+                                  <p className="text-sm font-medium text-paper truncate group-hover:text-teal transition-colors">
+                                    {sub.name}
+                                  </p>
+                                  <p className="text-[11px] text-dim">
+                                    {sub.fileCount || 0} items • {formatBytes(sub.totalSize || 0)}
+                                  </p>
+                                </div>
+                              </div>
+                              <span className="text-dim text-xs group-hover:text-teal transition-colors">➔</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Files Section */}
+                    {folderContents?.files && folderContents.files.length > 0 ? (
+                      <div className="space-y-2.5">
+                        <h2 className="text-xs font-semibold uppercase tracking-wider text-dim">
+                          Files ({folderContents.files.length})
+                        </h2>
+
+                        {viewMode === "grid" ? (
+                          /* Grid View */
+                          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                            {folderContents.files.map((file) => (
+                              <div
+                                key={file.id}
+                                onClick={() => setPreviewFile(file)}
+                                className="group bg-surface2/40 hover:bg-surface2/80 border border-line rounded-xl overflow-hidden cursor-pointer transition-all hover:border-teal/50 flex flex-col shadow-sm"
+                              >
+                                <div className="aspect-[4/3] w-full bg-surface2/60 relative flex items-center justify-center overflow-hidden">
+                                  <PublicFileThumbnail
+                                    token={token!}
+                                    fileId={file.id}
+                                    mimeType={file.mimeType}
+                                    password={password}
+                                  />
+                                </div>
+                                <div className="p-3 flex items-center justify-between gap-2">
+                                  <div className="min-w-0 flex-1">
+                                    <p className="text-xs font-medium text-paper truncate group-hover:text-teal transition-colors" title={file.name}>
+                                      {file.name}
+                                    </p>
+                                    <p className="text-[10px] text-dim mt-0.5">
+                                      {formatBytes(file.size)}
+                                    </p>
+                                  </div>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDownloadSingleFile(file);
+                                    }}
+                                    className="opacity-0 group-hover:opacity-100 text-dim hover:text-teal p-1.5 rounded hover:bg-surface transition-all text-xs shrink-0"
+                                    title="Download file"
+                                  >
+                                    ⬇️
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          /* List View */
+                          <div className="border border-line rounded-xl overflow-hidden divide-y divide-line">
+                            {folderContents.files.map((file) => (
+                              <div
+                                key={file.id}
+                                onClick={() => setPreviewFile(file)}
+                                className="px-4 py-3 flex items-center justify-between gap-3 hover:bg-surface2/60 cursor-pointer transition-colors group"
+                              >
+                                <div className="flex items-center gap-3 min-w-0 flex-1">
+                                  <span className="text-xl shrink-0">{iconFor(file.mimeType)}</span>
+                                  <div className="min-w-0">
+                                    <p className="text-xs font-medium text-paper truncate group-hover:text-teal transition-colors">
+                                      {file.name}
+                                    </p>
+                                    <p className="text-[10px] text-dim">{formatBytes(file.size)}</p>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setPreviewFile(file);
+                                    }}
+                                    className="text-xs text-dim hover:text-teal px-2 py-1 rounded hover:bg-surface transition-colors"
+                                  >
+                                    Preview
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDownloadSingleFile(file);
+                                    }}
+                                    className="text-xs bg-surface2 hover:bg-surface border border-line text-paper px-2.5 py-1 rounded transition-colors"
+                                  >
+                                    Download
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      (!folderContents?.subfolders || folderContents.subfolders.length === 0) && (
+                        <div className="py-16 text-center text-dim text-sm space-y-2">
+                          <span className="text-4xl block">📂</span>
+                          <p>This folder is empty</p>
+                        </div>
+                      )
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Footer info */}
+              <div className="px-6 py-3.5 bg-surface2/30 border-t border-line flex items-center justify-between text-xs text-dim">
+                <span>📥 {shareData.downloadsCount || 0} downloads</span>
+                <span className="text-[11px] opacity-70">
+                  Powered by TeleCloud • Telegram as Unlimited Cloud Storage
+                </span>
+              </div>
+            </div>
           ) : (
-            /* Unlocked Shared Item View */
+            /* ========================================================= */
+            /* SINGLE FILE OR ZIP-ONLY FOLDER VIEW                       */
+            /* ========================================================= */
             <div className="bg-surface border border-line rounded-2xl shadow-2xl overflow-hidden divide-y divide-line">
               {/* Hero Item Details */}
               <div className="p-8 space-y-6">
@@ -274,8 +674,8 @@ export default function PublicShare() {
                   </div>
                 </div>
 
-                {/* Inline Media Preview */}
-                {canPreview && (
+                {/* Inline Media Preview for single file */}
+                {canPreviewSingleFile && (
                   <div className="rounded-xl overflow-hidden bg-surface2/60 border border-line">
                     {isVideo && (
                       <video
@@ -345,7 +745,7 @@ export default function PublicShare() {
                 {/* Action Buttons */}
                 <div className="flex flex-col sm:flex-row gap-3 pt-2">
                   <button
-                    onClick={handleDownload}
+                    onClick={() => handleDownloadZip()}
                     disabled={downloading}
                     className="flex-1 bg-teal hover:opacity-90 disabled:opacity-50 text-ink font-semibold rounded-xl py-3 px-6 text-sm flex items-center justify-center gap-2 transition-all shadow-lg shadow-teal/10 cursor-pointer"
                   >
@@ -394,6 +794,97 @@ export default function PublicShare() {
           )}
         </div>
       </main>
+
+      {/* Full-Screen File Preview Modal */}
+      {previewFile && (
+        <div
+          className="fixed inset-0 bg-black/85 backdrop-blur-sm flex items-center justify-center z-50 p-4 sm:p-6"
+          onClick={() => setPreviewFile(null)}
+        >
+          <div
+            className="max-w-4xl w-full max-h-[90vh] flex flex-col bg-surface border border-line rounded-2xl overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="px-5 py-3 border-b border-line flex items-center justify-between bg-surface2 shrink-0">
+              <div className="flex items-center gap-2.5 min-w-0 mr-3">
+                <span className="text-xl shrink-0">{iconFor(previewFile.mimeType)}</span>
+                <span className="text-paper text-sm font-medium truncate">{previewFile.name}</span>
+                <span className="text-xs text-dim shrink-0">({formatBytes(previewFile.size)})</span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => handleDownloadSingleFile(previewFile)}
+                  className="text-xs bg-teal text-ink font-semibold rounded-lg px-3 py-1.5 hover:opacity-90 transition-opacity flex items-center gap-1.5"
+                >
+                  <span>⬇️</span>
+                  <span>Download</span>
+                </button>
+                <button
+                  onClick={() => setPreviewFile(null)}
+                  className="text-dim hover:text-paper p-1 rounded-md hover:bg-surface transition-colors"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body with media renderers */}
+            <div className="flex-1 p-4 flex items-center justify-center min-h-[300px] overflow-auto bg-black/50">
+              {previewFile.mimeType.startsWith("video/") && (
+                <video
+                  controls
+                  autoPlay
+                  playsInline
+                  src={api.publicShareFileUrl(token!, previewFile.id, password || undefined, false)}
+                  className="max-h-[70vh] max-w-full rounded shadow-lg"
+                />
+              )}
+              {previewFile.mimeType.startsWith("audio/") && (
+                <div className="p-8 flex flex-col items-center gap-4">
+                  <span className="text-6xl animate-bounce">🎵</span>
+                  <audio
+                    controls
+                    autoPlay
+                    src={api.publicShareFileUrl(token!, previewFile.id, password || undefined, false)}
+                    className="w-full max-w-md"
+                  />
+                </div>
+              )}
+              {previewFile.mimeType.startsWith("image/") && (
+                <img
+                  src={api.publicShareFileUrl(token!, previewFile.id, password || undefined, false)}
+                  alt={previewFile.name}
+                  className="max-h-[70vh] max-w-full object-contain rounded shadow-lg"
+                />
+              )}
+              {previewFile.mimeType === "application/pdf" && (
+                <iframe
+                  src={api.publicShareFileUrl(token!, previewFile.id, password || undefined, false)}
+                  title={previewFile.name}
+                  className="w-full h-[70vh] border-0 rounded bg-white"
+                />
+              )}
+              {!previewFile.mimeType.startsWith("video/") &&
+                !previewFile.mimeType.startsWith("audio/") &&
+                !previewFile.mimeType.startsWith("image/") &&
+                previewFile.mimeType !== "application/pdf" && (
+                  <div className="text-center py-12 space-y-3">
+                    <span className="text-5xl block">📦</span>
+                    <p className="text-paper font-medium text-sm">{previewFile.name}</p>
+                    <p className="text-xs text-dim">No inline preview available for this file type.</p>
+                    <button
+                      onClick={() => handleDownloadSingleFile(previewFile)}
+                      className="bg-teal text-ink font-semibold rounded-lg px-4 py-2 text-xs hover:opacity-90"
+                    >
+                      Download File ({formatBytes(previewFile.size)})
+                    </button>
+                  </div>
+                )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -45,7 +45,8 @@ sqlite.exec(`
     encrypted INTEGER DEFAULT 0,
     iv TEXT,
     chunks TEXT,
-    deletedAt INTEGER DEFAULT NULL
+    deletedAt INTEGER DEFAULT NULL,
+    sha256 TEXT
   );
 
   CREATE TABLE IF NOT EXISTS modules (
@@ -67,26 +68,40 @@ sqlite.exec(`
     expiresAt INTEGER,
     createdAt INTEGER NOT NULL,
     downloadsCount INTEGER NOT NULL DEFAULT 0,
-    folderKey TEXT
+    folderKey TEXT,
+    shareMode TEXT DEFAULT 'preview_and_zip'
   );
-
-  CREATE INDEX IF NOT EXISTS idx_folders_parentId ON folders(parentId);
-  CREATE INDEX IF NOT EXISTS idx_folders_deletedAt ON folders(deletedAt);
-  CREATE INDEX IF NOT EXISTS idx_files_folderId ON files(folderId);
-  CREATE INDEX IF NOT EXISTS idx_files_deletedAt ON files(deletedAt);
-  CREATE INDEX IF NOT EXISTS idx_modules_chatId ON modules(chatId);
-  CREATE INDEX IF NOT EXISTS idx_shares_token ON shares(token);
-  CREATE INDEX IF NOT EXISTS idx_shares_userId ON shares(userId);
-  CREATE INDEX IF NOT EXISTS idx_shares_target ON shares(targetId);
 `);
 
+// Run column migrations on existing tables that may lack newer columns
 try {
   sqlite.exec("ALTER TABLE shares ADD COLUMN folderKey TEXT");
 } catch {}
 
 try {
+  sqlite.exec("ALTER TABLE shares ADD COLUMN shareMode TEXT DEFAULT 'preview_and_zip'");
+} catch {}
+
+try {
   sqlite.exec("ALTER TABLE folders ADD COLUMN topicId INTEGER DEFAULT NULL");
 } catch {}
+
+try {
+  sqlite.exec("ALTER TABLE files ADD COLUMN sha256 TEXT");
+} catch {}
+
+// Initialize indexes after ensuring all columns exist
+sqlite.exec(`
+  CREATE INDEX IF NOT EXISTS idx_folders_parentId ON folders(parentId);
+  CREATE INDEX IF NOT EXISTS idx_folders_deletedAt ON folders(deletedAt);
+  CREATE INDEX IF NOT EXISTS idx_files_folderId ON files(folderId);
+  CREATE INDEX IF NOT EXISTS idx_files_deletedAt ON files(deletedAt);
+  CREATE INDEX IF NOT EXISTS idx_files_sha256 ON files(sha256);
+  CREATE INDEX IF NOT EXISTS idx_modules_chatId ON modules(chatId);
+  CREATE INDEX IF NOT EXISTS idx_shares_token ON shares(token);
+  CREATE INDEX IF NOT EXISTS idx_shares_userId ON shares(userId);
+  CREATE INDEX IF NOT EXISTS idx_shares_target ON shares(targetId);
+`);
 
 // Check and perform automatic migration from db.json if database is empty
 export function migrateFromLowDbIfEmpty() {
@@ -211,6 +226,8 @@ function mapFile(row: any): FileRecord {
     encrypted: Boolean(row.encrypted),
     iv: row.iv || undefined,
     deletedAt: row.deletedAt ? Number(row.deletedAt) : null,
+    telegramMessageId: chunks[0]?.messageId,
+    sha256: row.sha256 || undefined,
   };
 }
 
@@ -227,6 +244,7 @@ function mapShare(row: any): ShareRecord {
     createdAt: Number(row.createdAt),
     downloadsCount: Number(row.downloadsCount || 0),
     folderKey: row.folderKey || undefined,
+    shareMode: (row.shareMode as any) || "preview_and_zip",
   };
 }
 
@@ -264,7 +282,7 @@ const stmts = {
   ),
   getAllFilesRaw: sqlite.prepare("SELECT * FROM files"),
   createFile: sqlite.prepare(
-    "INSERT INTO files (id, folderId, name, mimeType, size, createdAt, encrypted, iv, chunks, deletedAt) VALUES (@id, @folderId, @name, @mimeType, @size, @createdAt, @encrypted, @iv, @chunks, @deletedAt)"
+    "INSERT INTO files (id, folderId, name, mimeType, size, createdAt, encrypted, iv, chunks, deletedAt, sha256) VALUES (@id, @folderId, @name, @mimeType, @size, @createdAt, @encrypted, @iv, @chunks, @deletedAt, @sha256)"
   ),
   deleteFilePermanent: sqlite.prepare("DELETE FROM files WHERE id = ?"),
 
@@ -287,7 +305,7 @@ const stmts = {
   getSharesByUser: sqlite.prepare("SELECT * FROM shares WHERE userId = ? ORDER BY createdAt DESC"),
   getShareByTarget: sqlite.prepare("SELECT * FROM shares WHERE targetId = ? AND userId = ?"),
   createShare: sqlite.prepare(
-    "INSERT INTO shares (id, token, userId, targetType, targetId, passwordHash, salt, expiresAt, createdAt, downloadsCount, folderKey) VALUES (@id, @token, @userId, @targetType, @targetId, @passwordHash, @salt, @expiresAt, @createdAt, @downloadsCount, @folderKey)"
+    "INSERT INTO shares (id, token, userId, targetType, targetId, passwordHash, salt, expiresAt, createdAt, downloadsCount, folderKey, shareMode) VALUES (@id, @token, @userId, @targetType, @targetId, @passwordHash, @salt, @expiresAt, @createdAt, @downloadsCount, @folderKey, @shareMode)"
   ),
   deleteShare: sqlite.prepare("DELETE FROM shares WHERE id = ? AND userId = ?"),
   deleteSharesByTarget: sqlite.prepare("DELETE FROM shares WHERE targetId = ?"),
@@ -496,7 +514,17 @@ export const sqliteDb = {
       iv: file.iv || null,
       chunks: JSON.stringify(file.chunks || []),
       deletedAt: file.deletedAt || null,
+      sha256: file.sha256 || null,
     });
+  },
+  getFileByHash(userId: string, sha256: string, size: number): FileRecord | undefined {
+    const stmt = sqlite.prepare(`
+      SELECT f.* FROM files f
+      WHERE f.sha256 = ? AND f.size = ? AND f.encrypted = 0 AND f.deletedAt IS NULL
+      LIMIT 1
+    `);
+    const row = stmt.get(sha256, size) as any;
+    return row ? mapFile(row) : undefined;
   },
   updateFile(id: string, updates: Partial<FileRecord>): void {
     const keys = Object.keys(updates);
@@ -583,6 +611,7 @@ export const sqliteDb = {
       createdAt: share.createdAt,
       downloadsCount: share.downloadsCount || 0,
       folderKey: share.folderKey || null,
+      shareMode: share.shareMode || "preview_and_zip",
     });
     return share;
   },

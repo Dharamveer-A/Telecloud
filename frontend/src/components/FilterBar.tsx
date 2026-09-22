@@ -47,10 +47,10 @@ export default function FilterBar({
   }
 
   const chipClass = (isActive: boolean) =>
-    `px-2.5 py-1 rounded-full text-xs border whitespace-nowrap ${isActive ? "bg-teal text-ink border-teal" : "border-line text-dim hover:text-paper"}`;
+    `px-2.5 py-1 rounded-full text-xs border whitespace-nowrap shrink-0 transition-colors ${isActive ? "bg-teal text-ink border-teal font-medium" : "border-line text-dim hover:text-paper"}`;
 
   return (
-    <div className="flex items-center gap-2 flex-wrap px-6 py-2 border-b border-line">
+    <div className="flex items-center gap-2 overflow-x-auto no-scrollbar px-4 sm:px-6 py-2 border-b border-line flex-nowrap">
       <button onClick={() => onChange(null)} className={chipClass(active === null)}>All</button>
       {BUILTINS.map((b) => (
         <button key={b.key} onClick={() => onChange({ type: "builtin", key: b.key })} className={chipClass(active?.type === "builtin" && active.key === b.key)}>
@@ -63,13 +63,13 @@ export default function FilterBar({
           <button onClick={() => onRemoveCustom(f.id)} className="opacity-60 hover:opacity-100">✕</button>
         </span>
       ))}
-      <button onClick={() => setShowForm(true)} className="px-2.5 py-1 rounded-full text-xs border border-dashed border-line text-dim hover:text-paper">
+      <button onClick={() => setShowForm(true)} className="px-2.5 py-1 rounded-full text-xs border border-dashed border-line text-dim hover:text-paper whitespace-nowrap shrink-0">
         + Custom filter
       </button>
 
       {showForm && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-6" onClick={reset}>
-          <div className="bg-surface border border-line rounded w-full max-w-sm p-6" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 sm:p-6" onClick={reset}>
+          <div className="bg-surface border border-line rounded-lg w-full max-w-sm p-5 sm:p-6 shadow-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h2 className="font-display text-lg mb-4 text-paper">New custom filter</h2>
             <div className="space-y-3">
               <div>

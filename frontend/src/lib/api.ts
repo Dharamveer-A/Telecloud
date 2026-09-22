@@ -47,6 +47,14 @@ function makeSpeedTracker(total: number) {
   };
 }
 
+export async function computeFileSHA256(file: File): Promise<string> {
+  if (!crypto?.subtle?.digest) return "";
+  const buffer = await file.arrayBuffer();
+  const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 export const api = {
   requestCode: (phone: string) => request("/auth/request-code", { method: "POST", body: JSON.stringify({ phone }) }),
   verifyCode: (phone: string, code: string) => request("/auth/verify-code", { method: "POST", body: JSON.stringify({ phone, code }) }),
@@ -63,6 +71,12 @@ export const api = {
   deleteFolder: (id: string) => request(`/folders/${id}`, { method: "DELETE" }),
   moveFolder: (id: string, newParentId: string) => request(`/folders/${id}/move`, { method: "POST", body: JSON.stringify({ newParentId }) }),
   renameFolder: (id: string, name: string) => request(`/folders/${id}/rename`, { method: "POST", body: JSON.stringify({ name }) }),
+  syncFolder: (id: string) => request(`/folders/${id}/sync`, { method: "POST" }),
+  checkFileHash: (folderId: string, name: string, size: number, sha256: string) =>
+    request("/files/check-hash", {
+      method: "POST",
+      body: JSON.stringify({ folderId, name, size, sha256 }),
+    }),
 
   uploadFile: (
     folderId: string,
@@ -204,6 +218,7 @@ export const api = {
     password?: string;
     expiresInHours?: number | null;
     folderPassword?: string;
+    shareMode?: "preview_and_zip" | "zip_only";
   }) => request("/shares", { method: "POST", body: JSON.stringify(data) }),
   getShares: () => request("/shares"),
   getShareForTarget: (targetId: string) => request(`/shares/target/${targetId}`),
@@ -221,6 +236,18 @@ export const api = {
     }
     return data;
   },
+  getPublicShareContents: async (token: string, folderId?: string, password?: string) => {
+    const params = new URLSearchParams();
+    if (folderId) params.set("folderId", folderId);
+    if (password) params.set("password", password);
+    const qs = params.toString();
+    const res = await fetch(`${BASE}/public/shares/${token}/contents${qs ? `?${qs}` : ""}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || "Failed to load folder contents");
+    }
+    return data;
+  },
   verifyPublicSharePassword: async (token: string, password: string) => {
     const res = await fetch(`${BASE}/public/shares/${token}/verify`, {
       method: "POST",
@@ -233,19 +260,34 @@ export const api = {
     }
     return data;
   },
-  publicShareDownloadUrl: (token: string, password?: string, dl = false) => {
+  publicShareFileUrl: (token: string, fileId: string, password?: string, dl = false) => {
     const params = new URLSearchParams();
     if (password) params.set("password", password);
     if (dl) params.set("dl", "1");
+    const qs = params.toString();
+    return `${BASE}/public/shares/${token}/files/${fileId}${qs ? `?${qs}` : ""}`;
+  },
+  publicShareThumbnailUrl: (token: string, fileId: string, password?: string) => {
+    const params = new URLSearchParams();
+    if (password) params.set("password", password);
+    const qs = params.toString();
+    return `${BASE}/public/shares/${token}/files/${fileId}/thumbnail${qs ? `?${qs}` : ""}`;
+  },
+  publicShareDownloadUrl: (token: string, password?: string, dl = false, folderId?: string) => {
+    const params = new URLSearchParams();
+    if (password) params.set("password", password);
+    if (dl) params.set("dl", "1");
+    if (folderId) params.set("folderId", folderId);
     const qs = params.toString();
     return `${BASE}/public/shares/${token}/download${qs ? `?${qs}` : ""}`;
   },
   async downloadPublicShareWithProgress(
     token: string,
     password?: string,
-    onProgress?: (p: TransferProgress) => void
+    onProgress?: (p: TransferProgress) => void,
+    folderId?: string
   ): Promise<Blob> {
-    const url = api.publicShareDownloadUrl(token, password, true);
+    const url = api.publicShareDownloadUrl(token, password, true, folderId);
     const res = await fetch(url);
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));

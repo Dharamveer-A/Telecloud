@@ -35,8 +35,8 @@ export default function GlobalContextMenu({ menu, onClose }: { menu: ContextMenu
 
   if (!menu) return null;
 
-  const MENU_WIDTH = 150;
-  const MENU_ITEM_HEIGHT = 30;
+  const MENU_WIDTH = 160;
+  const MENU_ITEM_HEIGHT = 36;
   const menuHeight = menu.actions.length * MENU_ITEM_HEIGHT + 12;
 
   // Keep menu within viewport bounds
@@ -60,7 +60,7 @@ export default function GlobalContextMenu({ menu, onClose }: { menu: ContextMenu
       <div
         ref={ref}
         style={{ left: x, top: y, width: MENU_WIDTH }}
-        className="fixed w-[150px] bg-surface2 border border-line rounded-md shadow-2xl z-50 text-xs py-1 overflow-hidden"
+        className="fixed w-[160px] bg-surface2 border border-line rounded-lg shadow-2xl z-50 text-xs sm:text-sm py-1 overflow-hidden"
         onContextMenu={(e) => e.preventDefault()}
       >
         {menu.actions.map((a, i) => (
@@ -71,7 +71,7 @@ export default function GlobalContextMenu({ menu, onClose }: { menu: ContextMenu
               onClose();
               a.onClick();
             }}
-            className={`w-full text-left px-3 py-1.5 hover:bg-surface transition-colors flex items-center justify-between ${
+            className={`w-full text-left px-3.5 py-2 hover:bg-surface transition-colors flex items-center justify-between text-xs sm:text-sm ${
               a.danger ? "text-danger hover:bg-danger/10" : "text-paper"
             }`}
           >

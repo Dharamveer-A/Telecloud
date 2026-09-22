@@ -3,12 +3,25 @@ import multer from "multer";
 import os from "os";
 import path from "path";
 import fs from "fs/promises";
+import { createReadStream } from "fs";
+import crypto from "crypto";
+import { v4 as uuid } from "uuid";
 import { db } from "../db/db";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { getClientForUser } from "../telegram/client";
 import { uploadFile, downloadFile, streamFileRangeToResponse, streamFileToResponse } from "../telegram/fileService";
-import { inputPeerFor, getInputPeerForChatId } from "../telegram/storageManager";
+import { inputPeerFor, getInputPeerForChatId, moveFileToTrash } from "../telegram/storageManager";
 import { verifyFolderPassword, deriveFolderFileKey } from "../utils/crypto";
+
+async function computeFileSha256(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash("sha256");
+    const stream = createReadStream(filePath);
+    stream.on("data", (data) => hash.update(data));
+    stream.on("end", () => resolve(hash.digest("hex")));
+    stream.on("error", reject);
+  });
+}
 
 const router = Router();
 router.use(requireAuth);
@@ -56,6 +69,48 @@ function getUniqueFileName(existingNames: Set<string>, name: string): string {
   return `${base} (${counter})${ext}`;
 }
 
+router.post("/check-hash", async (req: AuthedRequest, res) => {
+  const { folderId, name, size, sha256 } = req.body;
+  if (!folderId || !name || typeof size !== "number" || !sha256) {
+    return res.status(400).json({ error: "Missing required fields" });
+  }
+
+  const folder = db.folders.get(folderId);
+  if (!folder || folder.deletedAt) {
+    return res.status(404).json({ error: "Folder not found" });
+  }
+  if (folder.locked) {
+    // Locked folders maintain zero-knowledge encryption with unique salts/keys
+    return res.json({ instant: false });
+  }
+
+  const existing = db.files.byHash(req.userId!, sha256, size);
+  if (!existing || !existing.chunks || existing.chunks.length === 0) {
+    return res.json({ instant: false });
+  }
+
+  const existingFileNames = new Set(
+    db.files.byFolder(folderId).map((f) => f.name)
+  );
+  const uniqueName = getUniqueFileName(existingFileNames, name);
+
+  const newRecord = {
+    id: uuid(),
+    folderId,
+    name: uniqueName,
+    size: existing.size,
+    mimeType: existing.mimeType,
+    chunks: existing.chunks,
+    encrypted: false,
+    createdAt: Date.now(),
+    telegramMessageId: existing.telegramMessageId,
+    sha256: existing.sha256,
+  };
+
+  db.files.create(newRecord);
+  return res.json({ instant: true, file: newRecord });
+});
+
 router.post("/upload", upload.single("file"), async (req: AuthedRequest, res) => {
   const { folderId, password, name, progressId } = req.body;
   const file = req.file;
@@ -90,6 +145,10 @@ router.post("/upload", upload.single("file"), async (req: AuthedRequest, res) =>
 
   try {
     const client = await getClientForUser(req.userId!);
+    let sha256: string | undefined;
+    if (!fileKey) {
+      sha256 = await computeFileSha256(file.path).catch(() => undefined);
+    }
     const record = await uploadFile(client, {
       userId: req.userId!,
       folderId,
@@ -104,6 +163,10 @@ router.post("/upload", upload.single("file"), async (req: AuthedRequest, res) =>
         if (listener) listener(progress);
       } : undefined,
     });
+    if (sha256) {
+      db.files.update(record.id, { sha256 });
+      record.sha256 = sha256;
+    }
     res.json({ file: { id: record.id, name: record.name, size: record.size, mimeType: record.mimeType } });
   } catch (err: any) {
     res.status(500).json({ error: err.message || "Upload failed" });
@@ -262,7 +325,17 @@ router.get("/:fileId/download", async (req: AuthedRequest, res) => {
 });
 
 router.delete("/:fileId", async (req: AuthedRequest, res) => {
-  db.files.softDelete(req.params.fileId);
+  const file = db.files.get(req.params.fileId);
+  if (!file) return res.status(404).json({ error: "File not found" });
+
+  try {
+    const client = await getClientForUser(req.userId!);
+    await moveFileToTrash(client, req.userId!, file);
+  } catch (err: any) {
+    console.warn(`Failed to move file ${file.id} to Telegram trash channel:`, err?.message);
+  }
+
+  db.files.softDelete(file.id);
   res.json({ ok: true });
 });
 

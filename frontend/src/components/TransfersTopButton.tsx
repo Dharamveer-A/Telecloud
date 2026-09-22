@@ -147,7 +147,7 @@ export default function TransfersTopButton() {
 
       {/* Brave-style Dropdown Popover */}
       {showDropdown && (
-        <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 bg-surface border border-line rounded-lg shadow-2xl z-50 overflow-hidden text-sm animate-in fade-in slide-in-from-top-2">
+        <div className="absolute right-0 top-full mt-2 w-[calc(100vw-1.5rem)] sm:w-96 max-w-sm bg-surface border border-line rounded-lg shadow-2xl z-50 overflow-hidden text-sm animate-in fade-in slide-in-from-top-2">
           {/* Header */}
           <div className="px-4 py-2.5 bg-surface2 border-b border-line flex items-center justify-between">
             <div className="flex items-center gap-1.5 truncate mr-2">

@@ -1,20 +1,20 @@
 import { useEffect, useRef, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, clearToken, saveBlob } from "../lib/api";
+import { api, clearToken, saveBlob, computeFileSHA256 } from "../lib/api";
 import { itemsToTree, filesWithPathsToTree, DroppedNode, flattenFiles } from "../lib/dragDrop";
 import { ActiveFilter, CustomFilter, loadCustomFilters, saveCustomFilters, matchesBuiltin, matchesCustom } from "../lib/filters";
-import { transferStore } from "../lib/transfers";
+import { transferStore, useTransfers } from "../lib/transfers";
 import { useSelection } from "../lib/useSelection";
 import PasswordPrompt from "../components/PasswordPrompt";
 import PreviewModal from "../components/PreviewModal";
 import Thumbnail from "../components/Thumbnail";
 import GlobalContextMenu, { ContextMenuState } from "../components/GlobalContextMenu";
-import { Virtuoso, VirtuosoGrid } from "react-virtuoso";
 import MoveDialog from "../components/MoveDialog";
 import FilterBar from "../components/FilterBar";
 import TransfersPanel from "../components/TransfersPanel";
 import TransfersTopButton from "../components/TransfersTopButton";
 import ShareModal, { ShareTargetItem } from "../components/ShareModal";
+import ThemeToggle from "../components/ThemeToggle";
 
 type Crumb = { id: string; name: string; locked: boolean };
 type SubFolder = {
@@ -185,6 +185,44 @@ export default function Browser() {
   const [globalResults, setGlobalResults] = useState<{ files: FileItem[]; folders: SubFolder[] } | null>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [showNewMenu, setShowNewMenu] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const newMenuRef = useRef<HTMLDivElement>(null);
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+  const [showFabMenu, setShowFabMenu] = useState(false);
+  const fabMenuRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const transfers = useTransfers();
+  const activeTransfersCount = useMemo(
+    () => transfers.filter((t) => t.status === "active" || t.status === "queued").length,
+    [transfers]
+  );
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (newMenuRef.current && !newMenuRef.current.contains(e.target as Node)) {
+        setShowNewMenu(false);
+      }
+      if (fabMenuRef.current && !fabMenuRef.current.contains(e.target as Node)) {
+        setShowFabMenu(false);
+      }
+    }
+    if (showNewMenu || showFabMenu) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [showNewMenu, showFabMenu]);
+
+  useEffect(() => {
+    function handleEsc(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setMobileDrawerOpen(false);
+        setShowFabMenu(false);
+      }
+    }
+    window.addEventListener("keydown", handleEsc);
+    return () => window.removeEventListener("keydown", handleEsc);
+  }, []);
+
   const [dragging, setDragging] = useState(false);
   async function resolveFolderPath(pathParts: string[], cache: Map<string, Promise<string>>, targetFolderId: string): Promise<string> {
     let parentId = targetFolderId;
@@ -270,6 +308,35 @@ export default function Browser() {
               }
               if (transferStore.isCancelled(transferId)) break;
               continue;
+            }
+
+            // Check for instant hash deduplication if folder is unencrypted
+            if (!password) {
+              try {
+                const sha256 = await computeFileSHA256(f.file);
+                if (sha256 && !transferStore.isCancelled(transferId)) {
+                  const dedupRes = await api.checkFileHash(
+                    destFolderId,
+                    f.editableName,
+                    f.file.size,
+                    sha256
+                  );
+                  if (dedupRes?.instant) {
+                    transferStore.update(transferId, {
+                      loaded: f.file.size,
+                      total: f.file.size,
+                      bytesPerSecond: f.file.size * 10,
+                      etaSeconds: 0,
+                    });
+                    transferStore.finish(transferId);
+                    isDone = true;
+                    refreshCurrent();
+                    break;
+                  }
+                }
+              } catch (hashErr) {
+                console.warn("Deduplication check skipped, proceeding with upload:", hashErr);
+              }
             }
 
             await api.uploadFile(
@@ -473,6 +540,25 @@ export default function Browser() {
     }
     fetchTree();
     fetchTrash();
+  }
+
+  async function handleSyncTelegram() {
+    if (!current || syncing) return;
+    setSyncing(true);
+    try {
+      const res = await api.syncFolder(current.id);
+      await refreshCurrent();
+      if (res.importedCount > 0) {
+        alert(`Synced ${res.importedCount} new ${res.importedCount === 1 ? "file" : "files"} from Telegram!`);
+      } else {
+        alert("Folder is already in sync with Telegram.");
+      }
+    } catch (err: any) {
+      console.error("Telegram sync failed:", err);
+      alert(err?.message || "Failed to sync folder with Telegram");
+    } finally {
+      setSyncing(false);
+    }
   }
 
   async function init() {
@@ -1088,7 +1174,7 @@ export default function Browser() {
       <aside className="w-60 shrink-0 border-r border-line px-4 py-5 hidden sm:flex flex-col gap-1">
         <h1 className="font-display text-2xl mb-6 px-2">TeleCloud</h1>
 
-        <div className="relative mb-4">
+        <div className="relative mb-4" ref={newMenuRef}>
           <button
             onClick={() => setShowNewMenu((s) => !s)}
             className="w-full bg-teal text-ink font-medium rounded px-3 py-2.5 text-sm flex items-center gap-2 justify-center"
@@ -1201,8 +1287,194 @@ export default function Browser() {
             </button>
           </div>
         )}
-        <button onClick={logout} className="text-left px-2 py-2 rounded text-sm text-dim hover:text-paper">Sign out</button>
+        <div className="pt-2 border-t border-line mt-auto">
+          <button onClick={logout} className="w-full text-left px-2 py-1.5 rounded text-xs text-dim hover:text-paper hover:bg-surface2 transition-colors">Sign out</button>
+        </div>
       </aside>
+
+      {/* Mobile Slide-Over Navigation Drawer */}
+      {mobileDrawerOpen && (
+        <div className="fixed inset-0 z-50 sm:hidden">
+          {/* Backdrop */}
+          <div 
+            className="fixed inset-0 bg-black/60 backdrop-blur-xs transition-opacity animate-in fade-in duration-150"
+            onClick={() => setMobileDrawerOpen(false)}
+          />
+
+          {/* Drawer Panel */}
+          <aside className="fixed inset-y-0 left-0 w-72 max-w-[85vw] bg-surface border-r border-line shadow-2xl z-50 flex flex-col p-4 animate-in slide-in-from-left duration-200">
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-line mb-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">📁</span>
+                <h2 className="font-display text-xl font-bold text-paper">TeleCloud</h2>
+              </div>
+              <button
+                onClick={() => setMobileDrawerOpen(false)}
+                className="w-8 h-8 rounded-full flex items-center justify-center text-dim hover:text-paper hover:bg-surface2 transition-colors"
+                aria-label="Close menu"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Quick + New in Drawer */}
+            <div className="relative mb-3">
+              <button
+                onClick={() => setShowNewMenu((s) => !s)}
+                className="w-full bg-teal text-ink font-medium rounded-lg px-3 py-2.5 text-sm flex items-center gap-2 justify-center shadow-sm"
+              >
+                + New
+              </button>
+              {showNewMenu && (
+                <div className="absolute left-0 top-full mt-1 w-full bg-surface2 border border-line rounded-lg shadow-xl z-20 text-sm overflow-hidden animate-in fade-in">
+                  <button onClick={() => { setShowNewMenu(false); setMobileDrawerOpen(false); filePicker.current?.click(); }} className="w-full text-left px-3.5 py-2.5 hover:bg-surface flex items-center gap-2 text-paper">
+                    <span>📄</span> Upload files
+                  </button>
+                  <button onClick={() => { setShowNewMenu(false); setMobileDrawerOpen(false); folderPicker.current?.click(); }} className="w-full text-left px-3.5 py-2.5 hover:bg-surface flex items-center gap-2 text-paper">
+                    <span>📦</span> Upload folder
+                  </button>
+                  <button onClick={() => { setShowNewMenu(false); setMobileDrawerOpen(false); setShowNewFolder(true); }} className="w-full text-left px-3.5 py-2.5 hover:bg-surface flex items-center gap-2 text-paper">
+                    <span>📁</span> New folder
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Folder Tree */}
+            <div className="text-xs font-semibold text-dim uppercase tracking-wider px-2 mb-1.5">
+              Folders
+            </div>
+            <div className="flex-1 overflow-y-auto pr-1 space-y-0.5">
+              {allFolders
+                .filter((f) => !f.parentId)
+                .map((rootNode) => (
+                  <FolderTreeNode 
+                    key={rootNode.id} 
+                    node={rootNode} 
+                    allFolders={allFolders} 
+                    currentPath={path} 
+                    inTrash={inTrash}
+                    onDropToNode={handleFolderDrop}
+                    onSelect={(n) => {
+                      setInTrash(false);
+                      setMobileDrawerOpen(false);
+                      if (!n.parentId) {
+                        goToCrumb(0);
+                        return;
+                      }
+                      const newPath: Crumb[] = [];
+                      let curr = n;
+                      while (curr) {
+                        newPath.unshift({ id: curr.id, name: curr.name, locked: curr.locked });
+                        curr = allFolders.find((f) => f.id === curr.parentId);
+                      }
+                      openFolder(n.id, n.name, n.locked, newPath.slice(0, -1));
+                    }} 
+                  />
+                ))}
+            </div>
+
+            {/* Trash in Drawer */}
+            <div className="border-t border-line pt-2 mt-2">
+              <button
+                onClick={() => {
+                  setMobileDrawerOpen(false);
+                  openTrash();
+                }}
+                className={`w-full text-left px-2.5 py-2 rounded-lg text-sm flex items-center justify-between transition-colors ${
+                  inTrash ? "bg-surface2 text-paper font-medium" : "text-dim hover:text-paper hover:bg-surface2/60"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span>🗑️</span>
+                  <span>Trash</span>
+                </div>
+                {trashCount > 0 && (
+                  <span className="text-xs bg-danger/20 text-danger border border-danger/30 px-2 py-0.5 rounded-full font-mono font-medium">
+                    {trashCount}
+                  </span>
+                )}
+              </button>
+            </div>
+
+            {/* Folder Actions */}
+            {current && (
+              <div className="border-t border-line pt-2 mt-2 space-y-1">
+                <button
+                  onClick={() => {
+                    setMobileDrawerOpen(false);
+                    setShareTarget({
+                      kind: "folder",
+                      id: current.id,
+                      name: current.name,
+                      locked: current.locked,
+                    });
+                  }}
+                  className="w-full text-left px-2.5 py-2 rounded-lg text-sm text-dim hover:text-paper hover:bg-surface2/60 flex items-center gap-2"
+                >
+                  <span>🔗</span> Share this folder
+                </button>
+
+                {!current.locked ? (
+                  <button
+                    onClick={() => {
+                      setMobileDrawerOpen(false);
+                      setShowLockSetup(true);
+                    }}
+                    className="w-full text-left px-2.5 py-2 rounded-lg text-sm text-brass hover:bg-surface2/60 flex items-center gap-2"
+                  >
+                    <span>🔒</span> Lock this folder
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => {
+                        setMobileDrawerOpen(false);
+                        goToCrumb(Math.max(0, path.length - 2));
+                      }}
+                      className="w-full text-left px-2.5 py-2 rounded-lg text-sm text-brass hover:bg-surface2/60 flex items-center gap-2"
+                    >
+                      <span>🔒</span> Lock Session (Exit)
+                    </button>
+                    <button
+                      onClick={async () => {
+                        const pass = passwords[current.id];
+                        if (!pass) return;
+                        if (!confirm("Are you sure you want to permanently remove the password from this folder?")) return;
+                        try {
+                          await api.unlockFolder(current.id, pass);
+                          const updated = [...path];
+                          updated[updated.length - 1] = { ...current, locked: false };
+                          setPath(updated);
+                          refreshCurrent();
+                          setMobileDrawerOpen(false);
+                        } catch (e: any) {
+                          alert(e.message);
+                        }
+                      }}
+                      className="w-full text-left px-2.5 py-2 rounded-lg text-sm text-danger hover:bg-surface2/60 flex items-center gap-2"
+                    >
+                      <span>🔓</span> Remove Password
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* Drawer Footer */}
+            <div className="pt-3 border-t border-line mt-auto flex items-center justify-between">
+              <ThemeToggle />
+              <button
+                onClick={logout}
+                className="text-xs text-dim hover:text-danger px-3 py-1.5 rounded hover:bg-surface2 transition-colors flex items-center gap-1.5"
+              >
+                <span>🚪</span> Sign out
+              </button>
+            </div>
+          </aside>
+        </div>
+      )}
 
       {/* Main */}
       <div 
@@ -1212,10 +1484,104 @@ export default function Browser() {
         onDragLeave={onDragLeave}
         onDrop={onDrop}
       >
+        {/* Mobile Top Header (Phone & Small Tablet) */}
+        <div className="sm:hidden px-4 py-3 border-b border-line flex items-center justify-between bg-surface shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            {inTrash ? (
+              <button
+                onClick={() => {
+                  setInTrash(false);
+                  goToCrumb(0);
+                }}
+                className="p-1.5 -ml-1 text-dim hover:text-paper rounded-lg hover:bg-surface2 transition-colors flex items-center gap-1 shrink-0"
+                aria-label="Back to Files"
+                title="Back to Files"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
+            ) : path.length > 1 ? (
+              <button
+                onClick={() => goToCrumb(path.length - 2)}
+                className="p-1.5 -ml-1 text-dim hover:text-paper rounded-lg hover:bg-surface2 transition-colors flex items-center gap-1 shrink-0"
+                aria-label={`Back to ${path[path.length - 2]?.name || "parent folder"}`}
+                title="Back to parent folder"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
+            ) : (
+              <button
+                onClick={() => setMobileDrawerOpen(true)}
+                className="relative p-1.5 -ml-1 text-dim hover:text-paper rounded-lg hover:bg-surface2 transition-colors focus:outline-none shrink-0"
+                aria-label="Open navigation menu"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+                {trashCount > 0 && (
+                  <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-danger ring-2 ring-surface" />
+                )}
+              </button>
+            )}
+            <div className="flex items-center gap-1.5 truncate">
+              <span className="font-display font-semibold text-lg text-paper tracking-tight truncate">
+                {inTrash ? "Trash Bin" : path.length > 1 ? current?.name : "TeleCloud"}
+              </span>
+              {inTrash ? (
+                <span className="text-[11px] bg-danger/15 text-danger border border-danger/30 px-1.5 py-0.5 rounded font-mono font-medium shrink-0">
+                  {trashItems.length}
+                </span>
+              ) : current?.locked ? (
+                <span className="text-xs text-brass shrink-0">🔒</span>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            {!inTrash && (
+              <button
+                onClick={handleSyncTelegram}
+                disabled={syncing}
+                className="w-8 h-8 rounded-full border border-line bg-surface hover:bg-surface2 flex items-center justify-center text-xs transition-colors disabled:opacity-50"
+                title="Sync Telegram files"
+              >
+                <span className={syncing ? "animate-spin inline-block" : ""}>🔄</span>
+              </button>
+            )}
+            {!inTrash && (
+              <button
+                onClick={() => setView(view === "grid" ? "list" : "grid")}
+                className="w-8 h-8 rounded-full border border-line bg-surface hover:bg-surface2 flex items-center justify-center text-xs transition-colors text-paper"
+                title={view === "grid" ? "Switch to List View" : "Switch to Grid View"}
+              >
+                {view === "grid" ? "☰" : "⊞"}
+              </button>
+            )}
+            <ThemeToggle compact />
+            <TransfersTopButton />
+          </div>
+        </div>
+
         {inTrash ? (
-          <div className="px-6 py-4 border-b border-line flex items-center justify-between">
+          <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-line flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <span className="text-2xl">🗑️</span>
+              <button
+                onClick={() => {
+                  setInTrash(false);
+                  goToCrumb(0);
+                }}
+                className="px-2.5 py-1.5 border border-line bg-surface hover:bg-surface2 text-paper text-xs rounded-lg flex items-center gap-1.5 transition-colors font-medium shrink-0 shadow-sm"
+                title="Back to My Files"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
+                </svg>
+                <span>Back to Files</span>
+              </button>
+              <span className="text-2xl hidden sm:inline">🗑️</span>
               <div>
                 <h2 className="text-paper font-medium text-base">Trash Bin</h2>
                 <p className="text-dim text-xs">
@@ -1234,9 +1600,10 @@ export default function Browser() {
           </div>
         ) : (
           <>
-            <div className="px-6 py-3 border-b border-line flex items-center gap-3 flex-wrap">
-              <div className="flex-1 min-w-[200px] relative flex items-center">
+            <div className="px-4 sm:px-6 py-2.5 sm:py-3 border-b border-line flex items-center gap-2 sm:gap-3 flex-wrap">
+              <div className="flex-1 min-w-[160px] sm:min-w-[200px] relative flex items-center">
                 <input
+                  ref={searchInputRef}
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder={
@@ -1244,7 +1611,7 @@ export default function Browser() {
                       ? "Search across all files & folders..."
                       : `Search in "${current?.name || "this folder"}"...`
                   }
-                  className="w-full bg-surface border border-line rounded px-3 py-1.5 pr-8 text-sm focus:outline-none focus:border-teal"
+                  className="w-full bg-surface border border-line rounded px-3 py-1.5 pr-8 text-xs sm:text-sm focus:outline-none focus:border-teal"
                 />
                 {query && (
                   <button
@@ -1260,7 +1627,7 @@ export default function Browser() {
               <div className="flex border border-line rounded overflow-hidden text-xs shrink-0">
                 <button
                   onClick={() => setSearchScope("current")}
-                  className={`px-2.5 py-1.5 flex items-center gap-1.5 transition-colors ${
+                  className={`px-2 sm:px-2.5 py-1.5 flex items-center gap-1 transition-colors ${
                     searchScope === "current" ? "bg-surface2 text-paper font-medium" : "text-dim hover:text-paper"
                   }`}
                   title="Search only within this folder"
@@ -1270,7 +1637,7 @@ export default function Browser() {
                 </button>
                 <button
                   onClick={() => setSearchScope("global")}
-                  className={`px-2.5 py-1.5 flex items-center gap-1.5 transition-colors ${
+                  className={`px-2 sm:px-2.5 py-1.5 flex items-center gap-1 transition-colors ${
                     searchScope === "global" ? "bg-surface2 text-teal font-medium" : "text-dim hover:text-paper"
                   }`}
                   title="Search across all files and folders"
@@ -1281,26 +1648,37 @@ export default function Browser() {
               </div>
 
               <div className="flex items-center gap-1.5">
-                <span className="text-xs text-dim">Sort:</span>
+                <span className="text-xs text-dim hidden sm:inline">Sort:</span>
                 <select
                   value={sortBy}
                   onChange={(e) => setSortBy(e.target.value as SortOption)}
-                  className="bg-surface border border-line rounded px-2.5 py-1.5 text-xs text-paper focus:outline-none focus:border-teal cursor-pointer"
+                  className="bg-surface border border-line rounded px-2 sm:px-2.5 py-1.5 text-xs text-paper focus:outline-none focus:border-teal cursor-pointer"
                 >
                   <option value="name-asc">Name (A–Z)</option>
                   <option value="name-desc">Name (Z–A)</option>
                   <option value="date-desc">Newest first</option>
                   <option value="date-asc">Oldest first</option>
-                  <option value="size-desc">Size / Items (Largest)</option>
-                  <option value="size-asc">Size / Items (Smallest)</option>
+                  <option value="size-desc">Size (Largest)</option>
+                  <option value="size-asc">Size (Smallest)</option>
                 </select>
               </div>
-              <div className="flex border border-line rounded overflow-hidden text-xs">
+              <div className="hidden sm:flex border border-line rounded overflow-hidden text-xs">
                 <button onClick={() => setView("grid")} className={`px-2 py-1.5 ${view === "grid" ? "bg-surface2 text-paper" : "text-dim"}`}>Grid</button>
                 <button onClick={() => setView("list")} className={`px-2 py-1.5 ${view === "list" ? "bg-surface2 text-paper" : "text-dim"}`}>List</button>
               </div>
 
-              <div className="ml-auto flex items-center">
+              <button
+                onClick={handleSyncTelegram}
+                disabled={syncing}
+                className="hidden sm:flex px-2.5 py-1.5 border border-line bg-surface hover:bg-surface2 text-paper text-xs rounded items-center gap-1.5 transition-colors disabled:opacity-50 shrink-0"
+                title="Scan and sync files uploaded from Telegram mobile app"
+              >
+                <span className={syncing ? "animate-spin inline-block" : ""}>🔄</span>
+                <span className="hidden md:inline">{syncing ? "Syncing..." : "Sync Telegram"}</span>
+              </button>
+
+              <div className="hidden sm:flex ml-auto items-center gap-2">
+                <ThemeToggle compact />
                 <TransfersTopButton />
               </div>
             </div>
@@ -1314,23 +1692,45 @@ export default function Browser() {
             />
 
             {!isGlobalSearch ? (
-              <div className="px-6 py-3 border-b border-line flex items-center gap-2 text-sm overflow-x-auto">
+              <div className="px-4 sm:px-6 py-2 sm:py-2.5 border-b border-line flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm overflow-x-auto no-scrollbar">
+                {path.length > 1 && (
+                  <div className="flex items-center gap-1 shrink-0 mr-1">
+                    <button 
+                      onClick={() => goToCrumb(path.length - 2)}
+                      className="px-2 py-1 -ml-1 text-dim hover:text-paper hover:bg-surface2 rounded-md transition-colors flex items-center gap-1 text-xs border border-line/70 font-medium"
+                      title={`Back to ${path[path.length - 2]?.name || "parent folder"}`}
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
+                      </svg>
+                      <span>Back</span>
+                    </button>
+                    <button
+                      onClick={() => goToCrumb(0)}
+                      className="p-1 text-dim hover:text-paper hover:bg-surface2 rounded-md transition-colors text-xs"
+                      title="Jump to Home / Root folder"
+                    >
+                      <span>🏠</span>
+                    </button>
+                    <span className="text-line mx-0.5">/</span>
+                  </div>
+                )}
                 {path.map((c, i) => (
-                  <span key={c.id} className="flex items-center gap-2 whitespace-nowrap">
+                  <span key={c.id} className="flex items-center gap-1.5 sm:gap-2 whitespace-nowrap">
                     {i > 0 && <span className="text-dim">/</span>}
                     <button 
                       onClick={() => goToCrumb(i)} 
                       onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDropTargetId(c.id); }}
                       onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setDropTargetId(null); }}
                       onDrop={(e) => handleFolderDrop(e, c as SubFolder)}
-                      className={`${i === path.length - 1 ? "text-paper" : "text-dim hover:text-paper"} ${dropTargetId === c.id ? "bg-teal/20 px-1 rounded" : ""}`}
+                      className={`${i === path.length - 1 ? "text-paper font-medium" : "text-dim hover:text-paper"} ${dropTargetId === c.id ? "bg-teal/20 px-1 rounded" : ""}`}
                     >
                       {c.locked && <span className="text-brass mr-1">🔒</span>}
                       {c.name}
                     </button>
                   </span>
                 ))}
-                {error && <span className="text-danger text-sm ml-4">{error}</span>}
+                {error && <span className="text-danger text-xs sm:text-sm ml-4">{error}</span>}
               </div>
             ) : (
               <div className="px-6 py-2.5 bg-surface2/60 border-b border-line flex items-center justify-between text-xs animate-in fade-in">
@@ -1354,7 +1754,7 @@ export default function Browser() {
         )}
 
         <main 
-          className="flex-1 px-6 py-5 overflow-y-auto relative"
+          className="flex-1 px-3 sm:px-6 pt-3.5 sm:pt-5 pb-24 sm:pb-6 overflow-y-auto relative"
           onPointerDown={inTrash ? undefined : handlePointerDown}
           onContextMenu={inTrash ? undefined : handleMainContextMenu}
         >
@@ -1366,106 +1766,175 @@ export default function Browser() {
               <p className="text-xs text-dim">Deleted files and folders will appear here until restored or permanently deleted.</p>
             </div>
           ) : (
-            <div className="border border-line rounded-lg overflow-hidden bg-surface">
-              <table className="w-full text-left text-sm border-collapse">
-                <thead>
-                  <tr className="border-b border-line bg-surface2 text-dim text-xs">
-                    <th className="py-2.5 px-4 w-8">
-                      <input
-                        type="checkbox"
-                        checked={trashItems.length > 0 && selectedIds.size === trashItems.length}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setSelectedIds(new Set(trashItems.map((item) => item.id)));
-                          } else {
-                            setSelectedIds(new Set());
-                          }
-                        }}
-                        className="cursor-pointer accent-teal"
-                      />
-                    </th>
-                    <th className="py-2.5 px-4 font-normal">Name</th>
-                    <th className="py-2.5 px-4 font-normal">Original Location</th>
-                    <th className="py-2.5 px-4 font-normal">Date Deleted</th>
-                    <th className="py-2.5 px-4 font-normal">Size / Items</th>
-                    <th className="py-2.5 px-4 font-normal text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-line/40">
-                  {trashItems.map((item) => {
-                    const isSelected = selectedIds.has(item.id);
-                    return (
-                      <tr
-                        key={item.id}
-                        onClick={(e) => {
-                          if ((e.target as HTMLElement).tagName === 'BUTTON' || (e.target as HTMLElement).tagName === 'INPUT') return;
-                          setSelectedIds((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(item.id)) next.delete(item.id);
-                            else next.add(item.id);
-                            return next;
-                          });
-                        }}
-                        className={`hover:bg-surface2/60 transition-colors cursor-pointer ${
-                          isSelected ? "bg-teal/10" : ""
-                        }`}
-                      >
-                        <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={(e) => {
-                              setSelectedIds((prev) => {
-                                const next = new Set(prev);
-                                if (e.target.checked) next.add(item.id);
-                                else next.delete(item.id);
-                                return next;
-                              });
-                            }}
-                            className="cursor-pointer accent-teal"
-                          />
-                        </td>
-                        <td className="py-3 px-4">
-                          <div className="flex items-center gap-2">
-                            <span className="text-lg">
-                              {item.type === "folder" ? (item.locked ? "🔒" : "📁") : "📄"}
-                            </span>
-                            <span className="font-medium text-paper">{item.name}</span>
-                          </div>
-                        </td>
-                        <td className="py-3 px-4 text-dim text-xs">
-                          📁 {item.originalFolderName || "My Files"}
-                        </td>
-                        <td className="py-3 px-4 text-dim text-xs">
-                          {new Date(item.deletedAt).toLocaleDateString()} {new Date(item.deletedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </td>
-                        <td className="py-3 px-4 text-dim text-xs">
-                          {item.type === "folder" ? `${item.itemCount || 0} items` : formatBytes(item.size || 0)}
-                        </td>
-                        <td className="py-3 px-4 text-right">
-                          <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
-                            <button
-                              onClick={() => restoreTrashItems([item.id])}
-                              className="px-2.5 py-1 rounded text-xs bg-surface2 hover:bg-teal/20 text-dim hover:text-teal border border-line hover:border-teal/50 transition-colors flex items-center gap-1"
-                              title="Restore item"
-                            >
-                              <span>↩️</span> Restore
-                            </button>
-                            <button
-                              onClick={() => deleteTrashPermanent(item.id)}
-                              className="px-2.5 py-1 rounded text-xs bg-surface2 hover:bg-danger/20 text-dim hover:text-danger border border-line hover:border-danger/50 transition-colors flex items-center gap-1"
-                              title="Delete forever"
-                            >
-                              <span>🗑️</span> Delete Forever
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <>
+              {/* Desktop Table View */}
+              <div className="hidden md:block border border-line rounded-lg overflow-hidden bg-surface">
+                <table className="w-full text-left text-sm border-collapse">
+                  <thead>
+                    <tr className="border-b border-line bg-surface2 text-dim text-xs">
+                      <th className="py-2.5 px-4 w-8">
+                        <input
+                          type="checkbox"
+                          checked={trashItems.length > 0 && selectedIds.size === trashItems.length}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedIds(new Set(trashItems.map((item) => item.id)));
+                            } else {
+                              setSelectedIds(new Set());
+                            }
+                          }}
+                          className="cursor-pointer accent-teal"
+                        />
+                      </th>
+                      <th className="py-2.5 px-4 font-normal">Name</th>
+                      <th className="py-2.5 px-4 font-normal">Original Location</th>
+                      <th className="py-2.5 px-4 font-normal">Date Deleted</th>
+                      <th className="py-2.5 px-4 font-normal">Size / Items</th>
+                      <th className="py-2.5 px-4 font-normal text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-line/40">
+                    {trashItems.map((item) => {
+                      const isSelected = selectedIds.has(item.id);
+                      return (
+                        <tr
+                          key={item.id}
+                          onClick={(e) => {
+                            if ((e.target as HTMLElement).tagName === 'BUTTON' || (e.target as HTMLElement).tagName === 'INPUT') return;
+                            setSelectedIds((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(item.id)) next.delete(item.id);
+                              else next.add(item.id);
+                              return next;
+                            });
+                          }}
+                          className={`hover:bg-surface2/60 transition-colors cursor-pointer ${
+                            isSelected ? "bg-teal/10" : ""
+                          }`}
+                        >
+                          <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={(e) => {
+                                setSelectedIds((prev) => {
+                                  const next = new Set(prev);
+                                  if (e.target.checked) next.add(item.id);
+                                  else next.delete(item.id);
+                                  return next;
+                                });
+                              }}
+                              className="cursor-pointer accent-teal"
+                            />
+                          </td>
+                          <td className="py-3 px-4">
+                            <div className="flex items-center gap-2">
+                              <span className="text-lg">
+                                {item.type === "folder" ? (item.locked ? "🔒" : "📁") : "📄"}
+                              </span>
+                              <span className="font-medium text-paper">{item.name}</span>
+                            </div>
+                          </td>
+                          <td className="py-3 px-4 text-dim text-xs">
+                            📁 {item.originalFolderName || "My Files"}
+                          </td>
+                          <td className="py-3 px-4 text-dim text-xs">
+                            {new Date(item.deletedAt).toLocaleDateString()} {new Date(item.deletedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </td>
+                          <td className="py-3 px-4 text-dim text-xs">
+                            {item.type === "folder" ? `${item.itemCount || 0} items` : formatBytes(item.size || 0)}
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+                              <button
+                                onClick={() => restoreTrashItems([item.id])}
+                                className="px-2.5 py-1 rounded text-xs bg-surface2 hover:bg-teal/20 text-dim hover:text-teal border border-line hover:border-teal/50 transition-colors flex items-center gap-1"
+                                title="Restore item"
+                              >
+                                <span>↩️</span> Restore
+                              </button>
+                              <button
+                                onClick={() => deleteTrashPermanent(item.id)}
+                                className="px-2.5 py-1 rounded text-xs bg-surface2 hover:bg-danger/20 text-dim hover:text-danger border border-line hover:border-danger/50 transition-colors flex items-center gap-1"
+                                title="Delete forever"
+                              >
+                                <span>🗑️</span> Delete Forever
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile Trash Cards View */}
+              <div className="md:hidden space-y-2.5">
+                {trashItems.map((item) => {
+                  const isSelected = selectedIds.has(item.id);
+                  return (
+                    <div
+                      key={item.id}
+                      onClick={() => {
+                        setSelectedIds((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(item.id)) next.delete(item.id);
+                          else next.add(item.id);
+                          return next;
+                        });
+                      }}
+                      className={`p-3.5 rounded-xl border transition-colors bg-surface ${
+                        isSelected ? "border-teal ring-1 ring-teal bg-teal/10" : "border-line"
+                      }`}
+                    >
+                      <div className="flex items-start gap-2.5 min-w-0">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={(e) => {
+                            setSelectedIds((prev) => {
+                              const next = new Set(prev);
+                              if (e.target.checked) next.add(item.id);
+                              else next.delete(item.id);
+                              return next;
+                            });
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          className="accent-teal cursor-pointer shrink-0 mt-1"
+                        />
+                        <span className="text-xl shrink-0">
+                          {item.type === "folder" ? (item.locked ? "🔒" : "📁") : "📄"}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-paper truncate">{item.name}</p>
+                          <p className="text-xs text-dim mt-0.5 truncate">
+                            📁 {item.originalFolderName || "My Files"} &bull; {item.type === "folder" ? `${item.itemCount || 0} items` : formatBytes(item.size || 0)}
+                          </p>
+                          <p className="text-[11px] text-dim mt-0.5">
+                            Deleted {new Date(item.deletedAt).toLocaleDateString()}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-end gap-2 mt-3 pt-2.5 border-t border-line/40" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          onClick={() => restoreTrashItems([item.id])}
+                          className="px-3 py-1.5 rounded-lg text-xs bg-surface2 hover:bg-teal/20 text-dim hover:text-teal border border-line flex items-center gap-1 transition-colors"
+                        >
+                          <span>↩️</span> Restore
+                        </button>
+                        <button
+                          onClick={() => deleteTrashPermanent(item.id)}
+                          className="px-3 py-1.5 rounded-lg text-xs bg-surface2 hover:bg-danger/20 text-dim hover:text-danger border border-line flex items-center gap-1 transition-colors"
+                        >
+                          <span>🗑️</span> Delete Forever
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
           )
         ) : (
           <>
@@ -1488,7 +1957,7 @@ export default function Browser() {
           )}
 
           {view === "grid" ? (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 sm:gap-3">
               {sortedFolders.map((f) => (
                 <div
                   key={f.id}
@@ -1509,7 +1978,7 @@ export default function Browser() {
                 >
                   <button
                     onClick={(e) => handleItemMenu(e, { kind: "folder", id: f.id, name: f.name, locked: f.locked }, true)}
-                    className="absolute top-2 right-2 w-6 h-6 rounded flex items-center justify-center text-dim hover:text-paper hover:bg-surface2/80 transition-all opacity-70 group-hover:opacity-100 z-10 text-sm focus:outline-none"
+                    className="absolute top-1.5 right-1.5 w-7 h-7 sm:w-6 sm:h-6 rounded flex items-center justify-center text-dim hover:text-paper hover:bg-surface2/80 transition-all opacity-85 group-hover:opacity-100 z-10 text-sm focus:outline-none"
                     title="Options"
                     aria-label="Options"
                   >
@@ -1546,7 +2015,7 @@ export default function Browser() {
                 >
                   <button
                     onClick={(e) => handleItemMenu(e, { kind: "file", id: f.id, name: f.name }, true)}
-                    className="absolute top-2 right-2 w-6 h-6 rounded flex items-center justify-center text-dim hover:text-paper bg-surface/80 hover:bg-surface2 backdrop-blur-sm transition-all opacity-70 group-hover:opacity-100 z-10 text-sm shadow-sm focus:outline-none"
+                    className="absolute top-1.5 right-1.5 w-7 h-7 sm:w-6 sm:h-6 rounded flex items-center justify-center text-dim hover:text-paper bg-surface/85 hover:bg-surface2 backdrop-blur-xs transition-all opacity-85 group-hover:opacity-100 z-10 text-sm shadow-xs focus:outline-none"
                     title="Options"
                     aria-label="Options"
                   >
@@ -1599,10 +2068,10 @@ export default function Browser() {
                   onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setDropTargetId(null); }}
                   onDrop={(e) => handleFolderDrop(e, f)}
                   ref={(el) => registerItem(f.id, el)}
-                  className={`selectable-item flex items-center gap-3 px-4 py-3 border-b border-line cursor-pointer ${dropTargetId === f.id ? "bg-teal/20" : selectedIds.has(f.id) ? "bg-teal/20" : "hover:bg-surface"}`}
+                  className={`selectable-item flex items-center gap-2.5 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3 border-b border-line cursor-pointer ${dropTargetId === f.id ? "bg-teal/20" : selectedIds.has(f.id) ? "bg-teal/20" : "hover:bg-surface"}`}
                   onContextMenu={(e) => handleItemContextMenu(e, { kind: "folder", id: f.id, name: f.name, locked: f.locked })}
                 >
-                  <div className="flex items-center gap-3 text-left flex-1 min-w-0">
+                  <div className="flex items-center gap-2.5 sm:gap-3 text-left flex-1 min-w-0">
                     <span>{f.locked ? "🔒" : "📁"}</span>
                     <div className="flex flex-col min-w-0">
                       <span className="text-sm truncate">{f.name}</span>
@@ -1621,13 +2090,13 @@ export default function Browser() {
                       )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-3 shrink-0">
-                    <span className="text-dim text-xs w-20 text-right">
+                  <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
+                    <span className="text-dim text-xs w-16 sm:w-20 text-right">
                       {f.itemCount !== undefined ? `${f.itemCount} ${f.itemCount === 1 ? "item" : "items"}` : "—"}
                     </span>
                     <button
                       onClick={(e) => handleItemMenu(e, { kind: "folder", id: f.id, name: f.name, locked: f.locked }, true)}
-                      className="w-6 h-6 rounded flex items-center justify-center text-dim hover:text-paper hover:bg-surface2 transition-all opacity-70 group-hover:opacity-100 shrink-0 text-sm focus:outline-none"
+                      className="w-7 h-7 sm:w-6 sm:h-6 rounded flex items-center justify-center text-dim hover:text-paper hover:bg-surface2 transition-all opacity-85 group-hover:opacity-100 shrink-0 text-sm focus:outline-none"
                       title="Options"
                       aria-label="Options"
                     >
@@ -1642,10 +2111,10 @@ export default function Browser() {
                   draggable
                   onDragStart={(e) => handleInternalDragStart(e, { kind: "file", id: f.id, name: f.name })}
                   ref={(el) => registerItem(f.id, el)}
-                  className={`selectable-item flex items-center justify-between px-4 py-3 border-b border-line last:border-0 ${selectedIds.has(f.id) ? "bg-teal/20" : "hover:bg-surface"}`}
+                  className={`selectable-item flex items-center justify-between px-3 sm:px-4 py-2.5 sm:py-3 border-b border-line last:border-0 ${selectedIds.has(f.id) ? "bg-teal/20" : "hover:bg-surface"}`}
                   onContextMenu={(e) => handleItemContextMenu(e, { kind: "file", id: f.id, name: f.name })}
                 >
-                  <button onClick={(e) => { if (!handleItemClick(e, f.id)) setPreview(f); }} className="flex items-center gap-3 text-left flex-1 min-w-0">
+                  <button onClick={(e) => { if (!handleItemClick(e, f.id)) setPreview(f); }} className="flex items-center gap-2.5 sm:gap-3 text-left flex-1 min-w-0">
                     <span>{iconFor(f.mimeType)}</span>
                     <div className="flex flex-col min-w-0">
                       <span className="truncate text-sm">{f.name}</span>
@@ -1664,11 +2133,11 @@ export default function Browser() {
                       )}
                     </div>
                   </button>
-                  <div className="flex items-center gap-3 shrink-0">
-                    <span className="text-dim text-xs w-20 text-right">{formatBytes(f.size)}</span>
+                  <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
+                    <span className="text-dim text-xs w-16 sm:w-20 text-right">{formatBytes(f.size)}</span>
                     <button
                       onClick={(e) => handleItemMenu(e, { kind: "file", id: f.id, name: f.name }, true)}
-                      className="w-6 h-6 rounded flex items-center justify-center text-dim hover:text-paper hover:bg-surface2 transition-all opacity-70 group-hover:opacity-100 text-sm shrink-0 focus:outline-none"
+                      className="w-7 h-7 sm:w-6 sm:h-6 rounded flex items-center justify-center text-dim hover:text-paper hover:bg-surface2 transition-all opacity-85 group-hover:opacity-100 text-sm shrink-0 focus:outline-none"
                       title="Options"
                       aria-label="Options"
                     >
@@ -1790,24 +2259,68 @@ export default function Browser() {
         </div>
       )}
 
+      {/* Mobile Floating Action Button (FAB) */}
+      {!inTrash && selectedIds.size === 0 && (
+        <div className="fixed bottom-20 right-4 z-30 sm:hidden" ref={fabMenuRef}>
+          {showFabMenu && (
+            <div className="absolute bottom-16 right-0 w-48 bg-surface2 border border-line rounded-xl shadow-2xl p-1 text-sm overflow-hidden mb-2 animate-in fade-in slide-in-from-bottom-3">
+              <button
+                onClick={() => {
+                  setShowFabMenu(false);
+                  filePicker.current?.click();
+                }}
+                className="w-full text-left px-3.5 py-2.5 rounded-lg hover:bg-surface flex items-center gap-2.5 text-paper transition-colors"
+              >
+                <span className="text-base">📄</span> Upload files
+              </button>
+              <button
+                onClick={() => {
+                  setShowFabMenu(false);
+                  setShowNewFolder(true);
+                }}
+                className="w-full text-left px-3.5 py-2.5 rounded-lg hover:bg-surface flex items-center gap-2.5 text-paper transition-colors"
+              >
+                <span className="text-base">📁</span> New folder
+              </button>
+              <button
+                onClick={() => {
+                  setShowFabMenu(false);
+                  folderPicker.current?.click();
+                }}
+                className="w-full text-left px-3.5 py-2.5 rounded-lg hover:bg-surface flex items-center gap-2.5 text-paper transition-colors"
+              >
+                <span className="text-base">📦</span> Upload folder
+              </button>
+            </div>
+          )}
+          <button
+            onClick={() => setShowFabMenu((s) => !s)}
+            className="w-14 h-14 rounded-full bg-teal text-ink shadow-2xl flex items-center justify-center text-2xl font-bold active:scale-95 transition-all focus:outline-none cursor-pointer"
+            aria-label="Add or upload"
+          >
+            <span className={`transition-transform duration-200 ${showFabMenu ? "rotate-45" : ""}`}>+</span>
+          </button>
+        </div>
+      )}
+
       {selectedIds.size > 0 && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-surface/95 backdrop-blur border border-line shadow-2xl rounded-full px-5 py-2 flex items-center gap-3 animate-in fade-in slide-in-from-bottom-2">
+        <div className="fixed bottom-18 sm:bottom-6 inset-x-3 sm:inset-x-auto sm:left-1/2 sm:-translate-x-1/2 z-40 bg-surface/95 backdrop-blur border border-line shadow-2xl rounded-2xl sm:rounded-full px-3.5 sm:px-5 py-2 flex items-center justify-between sm:justify-start gap-2 sm:gap-3 max-w-[calc(100vw-1.5rem)] animate-in fade-in slide-in-from-bottom-2 overflow-x-auto no-scrollbar">
           <span className="text-xs font-semibold text-paper whitespace-nowrap">
-            {selectedIds.size} {selectedIds.size === 1 ? "item" : "items"} selected
+            {selectedIds.size} {selectedIds.size === 1 ? "item" : "items"}
           </span>
-          <span className="w-px h-4 bg-line" />
+          <span className="w-px h-4 bg-line shrink-0" />
           {inTrash ? (
             <>
               <button
                 onClick={() => restoreTrashItems(Array.from(selectedIds))}
-                className="text-xs text-teal hover:bg-teal/20 px-2.5 py-1 rounded-full flex items-center gap-1.5 transition-colors font-medium"
+                className="text-xs text-teal hover:bg-teal/20 px-2.5 py-1 rounded-full flex items-center gap-1.5 transition-colors font-medium whitespace-nowrap"
                 title="Restore selected items"
               >
                 <span>↩️</span> Restore
               </button>
               <button
                 onClick={() => bulkDeleteTrashPermanent(selectedIds)}
-                className="text-xs text-danger hover:bg-danger/10 px-2.5 py-1 rounded-full flex items-center gap-1.5 transition-colors font-medium"
+                className="text-xs text-danger hover:bg-danger/10 px-2.5 py-1 rounded-full flex items-center gap-1.5 transition-colors font-medium whitespace-nowrap"
                 title="Delete selected items permanently"
               >
                 <span>🗑️</span> Delete Forever
@@ -1817,31 +2330,31 @@ export default function Browser() {
             <>
               <button
                 onClick={() => openBulkMove(selectedIds)}
-                className="text-xs text-dim hover:text-paper hover:bg-surface2 px-2.5 py-1 rounded-full flex items-center gap-1.5 transition-colors"
+                className="text-xs text-dim hover:text-paper hover:bg-surface2 px-2.5 py-1 rounded-full flex items-center gap-1.5 transition-colors whitespace-nowrap"
                 title="Move selected items"
               >
                 <span>📦</span> Move
               </button>
               <button
                 onClick={() => bulkDownload(selectedIds)}
-                className="text-xs text-dim hover:text-paper hover:bg-surface2 px-2.5 py-1 rounded-full flex items-center gap-1.5 transition-colors"
+                className="text-xs text-dim hover:text-paper hover:bg-surface2 px-2.5 py-1 rounded-full flex items-center gap-1.5 transition-colors whitespace-nowrap"
                 title="Download selected items"
               >
                 <span>⬇️</span> Download
               </button>
               <button
                 onClick={() => bulkDelete(selectedIds)}
-                className="text-xs text-danger/80 hover:text-danger hover:bg-danger/10 px-2.5 py-1 rounded-full flex items-center gap-1.5 transition-colors"
+                className="text-xs text-danger/80 hover:text-danger hover:bg-danger/10 px-2.5 py-1 rounded-full flex items-center gap-1.5 transition-colors whitespace-nowrap"
                 title="Delete selected items"
               >
                 <span>🗑</span> Delete
               </button>
             </>
           )}
-          <span className="w-px h-4 bg-line" />
+          <span className="w-px h-4 bg-line shrink-0" />
           <button
             onClick={() => setSelectedIds(new Set())}
-            className="text-xs text-dim hover:text-paper hover:bg-surface2 w-5 h-5 rounded-full flex items-center justify-center transition-colors"
+            className="text-xs text-dim hover:text-paper hover:bg-surface2 w-6 h-6 rounded-full flex items-center justify-center transition-colors shrink-0"
             title="Clear selection"
             aria-label="Clear selection"
           >
@@ -1849,6 +2362,106 @@ export default function Browser() {
           </button>
         </div>
       )}
+
+      {/* Mobile Bottom Navigation Bar (Dock) */}
+      <nav 
+        className="sm:hidden fixed bottom-0 inset-x-0 z-30 bg-surface/95 backdrop-blur-md border-t border-line px-2 py-1.5 flex items-center justify-around shadow-lg"
+        aria-label="Mobile Navigation"
+      >
+        {/* Files tab */}
+        <button
+          onClick={() => {
+            if (inTrash) {
+              setInTrash(false);
+              goToCrumb(0);
+            } else if (path.length > 1) {
+              goToCrumb(0);
+            }
+          }}
+          className={`flex flex-col items-center justify-center flex-1 py-1 rounded-lg transition-colors ${
+            !inTrash ? "text-teal font-medium" : "text-dim hover:text-paper"
+          }`}
+        >
+          <svg className="w-5 h-5 mb-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+          </svg>
+          <span className="text-[11px] leading-tight">Files</span>
+        </button>
+
+        {/* Search tab */}
+        <button
+          onClick={() => {
+            if (inTrash) setInTrash(false);
+            searchInputRef.current?.focus();
+            searchInputRef.current?.scrollIntoView({ behavior: "smooth" });
+          }}
+          className={`flex flex-col items-center justify-center flex-1 py-1 rounded-lg transition-colors ${
+            query ? "text-teal font-medium" : "text-dim hover:text-paper"
+          }`}
+        >
+          <svg className="w-5 h-5 mb-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <span className="text-[11px] leading-tight">Search</span>
+        </button>
+
+        {/* Transfers tab */}
+        <button
+          onClick={() => {
+            if (transfers.length === 0) {
+              filePicker.current?.click();
+            } else {
+              transferStore.setViewMode(transferStore.getViewMode() === "bottom" ? "minimized" : "bottom");
+            }
+          }}
+          className="relative flex flex-col items-center justify-center flex-1 py-1 rounded-lg text-dim hover:text-paper transition-colors"
+        >
+          <div className="relative">
+            <svg className="w-5 h-5 mb-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+            </svg>
+            {activeTransfersCount > 0 && (
+              <span className="absolute -top-1 -right-2 min-w-[15px] h-[15px] rounded-full bg-teal text-ink text-[9px] font-bold flex items-center justify-center px-0.5 animate-pulse">
+                {activeTransfersCount}
+              </span>
+            )}
+          </div>
+          <span className="text-[11px] leading-tight">Transfers</span>
+        </button>
+
+        {/* Trash tab */}
+        <button
+          onClick={() => {
+            setInTrash(!inTrash);
+          }}
+          className={`relative flex flex-col items-center justify-center flex-1 py-1 rounded-lg transition-colors ${
+            inTrash ? "text-danger font-medium" : "text-dim hover:text-paper"
+          }`}
+        >
+          <div className="relative">
+            <svg className="w-5 h-5 mb-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+            {trashCount > 0 && (
+              <span className="absolute -top-1 -right-2 min-w-[15px] h-[15px] rounded-full bg-danger text-paper text-[9px] font-bold flex items-center justify-center px-0.5">
+                {trashCount > 99 ? "99+" : trashCount}
+              </span>
+            )}
+          </div>
+          <span className="text-[11px] leading-tight">Trash</span>
+        </button>
+
+        {/* Menu tab */}
+        <button
+          onClick={() => setMobileDrawerOpen(true)}
+          className="flex flex-col items-center justify-center flex-1 py-1 rounded-lg text-dim hover:text-paper transition-colors"
+        >
+          <svg className="w-5 h-5 mb-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+          <span className="text-[11px] leading-tight">Menu</span>
+        </button>
+      </nav>
 
       <TransfersPanel />
       <GlobalContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />

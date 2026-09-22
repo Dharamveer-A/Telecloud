@@ -28,4 +28,12 @@ export default defineConfig({
       "/api": "http://localhost:4000",
     },
   },
+  preview: {
+    host: true,
+    allowedHosts: true,
+    proxy: {
+      "/api": "http://localhost:4000",
+    },
+  },
 });
+

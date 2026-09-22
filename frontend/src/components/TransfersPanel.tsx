@@ -54,7 +54,7 @@ export default function TransfersPanel() {
 
   return (
     <div
-      className={`fixed bottom-0 right-6 z-40 w-80 sm:w-96 max-w-[90vw] bg-surface border border-line rounded-t-lg shadow-2xl flex flex-col transition-[height] duration-200 ${
+      className={`fixed bottom-0 inset-x-3 sm:inset-x-auto sm:right-6 z-40 w-auto sm:w-96 max-w-[calc(100vw-1.5rem)] bg-surface border border-line rounded-t-lg shadow-2xl flex flex-col transition-[height] duration-200 ${
         collapsed ? "h-12" : "h-80"
       }`}
     >

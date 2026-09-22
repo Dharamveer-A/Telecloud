@@ -31,6 +31,8 @@ export interface FileRecord {
   encrypted: boolean;       // true if the parent folder is locked
   iv?: string;               // AES-GCM IV, only set when encrypted
   deletedAt?: number | null; // NULL if active, timestamp if in Trash
+  telegramMessageId?: number; // Main message ID in Telegram
+  sha256?: string;           // SHA-256 content hash for instant deduplication
 }
 
 export interface FolderRecord {
@@ -64,6 +66,7 @@ export interface ShareRecord {
   createdAt: number;
   downloadsCount: number;
   folderKey?: string | null; // encrypted with masterKey() if target was locked/encrypted
+  shareMode?: "preview_and_zip" | "zip_only" | null;
 }
 
 export interface Schema {
@@ -129,6 +132,7 @@ export const db = {
     softDelete: sqliteDb.softDeleteFile,
     restore: sqliteDb.restoreFile,
     deletePermanent: sqliteDb.deleteFilePermanent,
+    byHash: sqliteDb.getFileByHash,
   },
   modules: {
     get: sqliteDb.getModule,
