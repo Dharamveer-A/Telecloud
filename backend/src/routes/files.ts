@@ -8,8 +8,8 @@ import crypto from "crypto";
 import { v4 as uuid } from "uuid";
 import { db } from "../db/db";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
-import { getClientForUser } from "../telegram/client";
-import { uploadFile, downloadFile, streamFileRangeToResponse, streamFileToResponse } from "../telegram/fileService";
+import { getClientForUser, evictClientForUser } from "../telegram/client";
+import { uploadFile, downloadFile, streamFileRangeToResponse, streamFileToResponse, getRangeBurstSize } from "../telegram/fileService";
 import { inputPeerFor, getInputPeerForChatId, moveFileToTrash } from "../telegram/storageManager";
 import { verifyFolderPassword, deriveFolderFileKey } from "../utils/crypto";
 
@@ -169,6 +169,10 @@ router.post("/upload", upload.single("file"), async (req: AuthedRequest, res) =>
     }
     res.json({ file: { id: record.id, name: record.name, size: record.size, mimeType: record.mimeType } });
   } catch (err: any) {
+    if (/SESSION_REVOKED/i.test(err?.message || err?.errorMessage || "")) {
+      evictClientForUser(req.userId!);
+      return res.status(401).json({ error: "Telegram session was revoked. Please log in again to reconnect.", code: "SESSION_REVOKED" });
+    }
     res.status(500).json({ error: err.message || "Upload failed" });
   } finally {
     if (progressId) {
@@ -305,8 +309,16 @@ router.get("/:fileId/download", async (req: AuthedRequest, res) => {
     if (rangeHeader && !file.encrypted) {
       const match = /bytes=(\d*)-(\d*)/.exec(rangeHeader);
       const start = match?.[1] ? parseInt(match[1], 10) : 0;
-      const end = match?.[2] ? parseInt(match[2], 10) : file.size - 1;
-      const clampedEnd = Math.min(end, file.size - 1);
+      const burstSize = getRangeBurstSize();
+      const rawEnd = match?.[2] ? parseInt(match[2], 10) : (start + burstSize - 1);
+      const clampedEnd = Math.min(rawEnd, start + burstSize - 1, file.size - 1);
+
+      if (start > clampedEnd || start >= file.size) {
+        res.status(416);
+        res.setHeader("Content-Range", `bytes */${file.size}`);
+        return;
+      }
+
       const length = clampedEnd - start + 1;
 
       res.status(206);
@@ -320,6 +332,10 @@ router.get("/:fileId/download", async (req: AuthedRequest, res) => {
     res.setHeader("Accept-Ranges", file.encrypted ? "none" : "bytes");
     await streamFileToResponse(client, file, res, fileKey);
   } catch (err: any) {
+    if (/SESSION_REVOKED/i.test(err?.message || err?.errorMessage || "")) {
+      evictClientForUser(req.userId!);
+      return res.status(401).json({ error: "Telegram session was revoked. Please log in again to reconnect.", code: "SESSION_REVOKED" });
+    }
     res.status(500).json({ error: err.message || "Download failed" });
   }
 });

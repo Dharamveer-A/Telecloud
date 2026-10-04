@@ -9,7 +9,33 @@ import { db, FileRecord, FileChunk } from "../db/db";
 import { getWritableModule, recordChunkStored, inputPeerFor, getInputPeerForChatId, invalidateModule, getOrCreateForumSupergroup, createFolderTopic } from "./storageManager";
 import { encryptBuffer, decryptBuffer, encryptFile, decryptStream } from "../utils/crypto";
 
-const MAX_CHUNK = parseInt(process.env.MAX_TELEGRAM_FILE_BYTES || "1900000000", 10);
+// Default chunk size for streaming and uploading: 30 MB (31,457,280 bytes).
+// Splitting files into 10MB–50MB chunks enables instant video/audio streaming,
+// fast seeking via HTTP Range requests, and strictly bounded RAM usage.
+export const DEFAULT_CHUNK_SIZE = 30 * 1024 * 1024; // 30 MB
+
+export function getChunkSize(): number {
+  if (process.env.CHUNK_SIZE_BYTES) {
+    const parsed = parseInt(process.env.CHUNK_SIZE_BYTES, 10);
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+  if (process.env.MAX_TELEGRAM_FILE_BYTES) {
+    const parsed = parseInt(process.env.MAX_TELEGRAM_FILE_BYTES, 10);
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+  return DEFAULT_CHUNK_SIZE;
+}
+
+// Default max range burst for video streaming HTTP Range requests: matches chunk size (30MB)
+export const DEFAULT_RANGE_BURST = 30 * 1024 * 1024; // 30 MB
+
+export function getRangeBurstSize(): number {
+  if (process.env.MAX_RANGE_BURST) {
+    const parsed = parseInt(process.env.MAX_RANGE_BURST, 10);
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+  return getChunkSize();
+}
 
 const TMP_DIR = path.join(process.env.DATA_DIR || "./data", "tmp");
 async function ensureTmpDir() {
@@ -89,12 +115,13 @@ export async function uploadFile(client: TelegramClient, opts: UploadOptions): P
   }
 
   try {
-    const partsCount = Math.max(1, Math.ceil(totalSize / MAX_CHUNK));
+    const chunkSize = getChunkSize();
+    const partsCount = Math.max(1, Math.ceil(totalSize / chunkSize));
     const chunks: FileChunk[] = [];
     
     for (let i = 0; i < partsCount; i++) {
-      const offset = i * MAX_CHUNK;
-      const length = Math.min(MAX_CHUNK, totalSize - offset);
+      const offset = i * chunkSize;
+      const length = Math.min(chunkSize, totalSize - offset);
       
       await ensureTmpDir();
       const chunkPath = path.join(TMP_DIR, `${uuid()}.part`);
@@ -121,17 +148,34 @@ export async function uploadFile(client: TelegramClient, opts: UploadOptions): P
           sendParams.replyTo = folder.topicId;
         }
 
+        const sendWithFloodRetry = async (peer: any, params: any) => {
+          for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+              return await client.sendFile(peer, params);
+            } catch (err: any) {
+              const waitMatch = (err?.errorMessage || err?.message || "").match(/FLOOD_WAIT_(\d+)/i);
+              const waitSeconds = waitMatch ? parseInt(waitMatch[1], 10) : err?.seconds;
+              if (waitSeconds && waitSeconds <= 60 && attempt < 2) {
+                console.warn(`[Upload] Telegram FloodWait encountered: waiting ${waitSeconds}s before retrying part ${i + 1}/${partsCount}...`);
+                await new Promise((r) => setTimeout(r, (waitSeconds + 1) * 1000));
+                continue;
+              }
+              throw err;
+            }
+          }
+        };
+
         try {
-          sent = await client.sendFile(inputPeerFor(targetMod), sendParams);
+          sent = await sendWithFloodRetry(inputPeerFor(targetMod), sendParams);
         } catch (err: any) {
           if (targetMod === forumMod) {
             console.warn("Forum send failed, falling back to standard storage module:", err?.message);
             targetMod = await getWritableModule(client, userId);
-            sent = await client.sendFile(inputPeerFor(targetMod), { ...sendParams, replyTo: undefined });
+            sent = await sendWithFloodRetry(inputPeerFor(targetMod), { ...sendParams, replyTo: undefined });
           } else if (err?.errorMessage === "CHANNEL_INVALID" || /CHANNEL_INVALID/i.test(err?.message || "")) {
             await invalidateModule(targetMod.id);
             targetMod = await getWritableModule(client, userId);
-            sent = await client.sendFile(inputPeerFor(targetMod), sendParams);
+            sent = await sendWithFloodRetry(inputPeerFor(targetMod), sendParams);
           } else {
             throw err;
           }
@@ -148,6 +192,11 @@ export async function uploadFile(client: TelegramClient, opts: UploadOptions): P
         size: length,
       });
       await recordChunkStored(targetMod.id);
+
+      // Light pacing between multi-part uploads to avoid Telegram rate-limit bursts
+      if (i < partsCount - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
     }
 
     const record: FileRecord = {
@@ -171,9 +220,9 @@ export async function uploadFile(client: TelegramClient, opts: UploadOptions): P
   }
 }
 
-// In-memory LRU cache of small chunk buffers (e.g. for media scrubbing).
-// Limited to chunks <= 32MB and at most 8 items to strictly bound heap usage.
-const MAX_CACHEABLE_BYTES = 32 * 1024 * 1024;
+// In-memory LRU cache of chunk buffers (e.g. for media streaming & scrubbing).
+// Bounded to chunks <= 64MB and at most 8 items to strictly bound heap usage (~250MB RAM).
+const MAX_CACHEABLE_BYTES = 64 * 1024 * 1024;
 const CHUNK_CACHE_LIMIT = 8;
 const chunkCache = new Map<string, Buffer>();
 
@@ -245,6 +294,91 @@ function chunkOffsets(ordered: FileChunk[]): number[] {
   return offsets;
 }
 
+async function fetchAndStreamChunkRange(
+  client: TelegramClient,
+  chunk: FileChunk,
+  chunkStart: number,
+  reqStart: number,
+  reqEnd: number,
+  res: any
+): Promise<void> {
+  const cacheKey = `${chunk.chatId}:${chunk.messageId}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) {
+    const sliceStart = Math.max(0, reqStart - chunkStart);
+    const sliceEnd = Math.min(cached.length, reqEnd - chunkStart + 1);
+    const slice = cached.subarray(sliceStart, sliceEnd);
+    if (slice.length > 0 && !res.writableEnded) {
+      res.write(slice);
+    }
+    return;
+  }
+
+  const peer = chunk.accessHash
+    ? inputPeerFor({ chatId: chunk.chatId, accessHash: chunk.accessHash } as any)
+    : await getInputPeerForChatId(client, chunk.chatId);
+  const [msg] = await client.getMessages(peer, { ids: [chunk.messageId] });
+  if (!msg) return;
+
+  const collected: Buffer[] = [];
+  let currentOffset = chunkStart;
+
+  class StreamingRangeWriter {
+    async write(part: Buffer) {
+      if (res.destroyed) {
+        throw new Error("Client closed stream");
+      }
+
+      collected.push(part);
+
+      const partStart = currentOffset;
+      const partEnd = currentOffset + part.length - 1;
+      currentOffset += part.length;
+
+      // Check if this incoming part overlaps the requested [reqStart, reqEnd]
+      if (partEnd >= reqStart && partStart <= reqEnd) {
+        const sliceStart = Math.max(0, reqStart - partStart);
+        const sliceEnd = Math.min(part.length, reqEnd - partStart + 1);
+        const slice = part.subarray(sliceStart, sliceEnd);
+        if (slice.length > 0 && !res.writableEnded && !res.destroyed) {
+          if (!res.write(slice)) {
+            await new Promise<void>((resolve) => {
+              const onDrain = () => { cleanup(); resolve(); };
+              const onClose = () => { cleanup(); resolve(); };
+              const cleanup = () => {
+                res.removeListener("drain", onDrain);
+                res.removeListener("close", onClose);
+              };
+              res.once("drain", onDrain);
+              res.once("close", onClose);
+            });
+          }
+        }
+      }
+    }
+    async close() {}
+  }
+
+  try {
+    await client.downloadMedia(msg, {
+      outputFile: new StreamingRangeWriter() as any,
+    });
+  } catch (err: any) {
+    if (res.writableEnded || res.destroyed || /closed|aborted|destroyed/i.test(err?.message || "")) {
+      return;
+    }
+    throw err;
+  }
+
+  if (collected.length > 0) {
+    const full = Buffer.concat(collected);
+    // Only cache in RAM if the chunk was completely downloaded
+    if (full.length === chunk.size) {
+      cacheSet(cacheKey, full);
+    }
+  }
+}
+
 // Fetches only the chunk(s) covering [start, end] (inclusive byte range)
 // and returns exactly those bytes. Only safe for UNENCRYPTED files -
 // AES-GCM requires the whole ciphertext to verify its auth tag, so
@@ -260,16 +394,18 @@ export async function streamFileRangeToResponse(
   const offsets = chunkOffsets(ordered);
 
   for (let i = 0; i < ordered.length; i++) {
+    if (res.writableEnded || res.destroyed) break;
     const chunkStart = offsets[i];
     const chunkEnd = chunkStart + ordered[i].size - 1;
     if (chunkEnd < start || chunkStart > end) continue;
 
-    const buf = await fetchChunkBuffer(client, ordered[i]);
-    const sliceStart = Math.max(0, start - chunkStart);
-    const sliceEnd = Math.min(buf.length, end - chunkStart + 1);
-    res.write(buf.subarray(sliceStart, sliceEnd));
+    await fetchAndStreamChunkRange(client, ordered[i], chunkStart, start, end, res);
+    // If this chunk covered the end of the requested range, stop processing further chunks
+    if (chunkEnd >= end) break;
   }
-  res.end();
+  if (!res.writableEnded && !res.destroyed) {
+    res.end();
+  }
 }
 
 export async function downloadFileRange(

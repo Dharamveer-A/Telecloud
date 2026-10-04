@@ -267,6 +267,18 @@ export async function startTelegramSyncListener(
   }
 }
 
+// Evict and disconnect an invalidated or revoked client
+export function evictClientForUser(userId: string): void {
+  const cached = activeClients.get(userId);
+  if (cached) {
+    try {
+      cached.disconnect();
+    } catch {}
+    activeClients.delete(userId);
+  }
+  activeListeners.delete(userId);
+}
+
 // Get (or reconnect) the live client for an already-logged-in user.
 export async function getClientForUser(userId: string): Promise<TelegramClient> {
   const cached = activeClients.get(userId);
@@ -279,7 +291,14 @@ export async function getClientForUser(userId: string): Promise<TelegramClient> 
   if (!user) throw new Error("User not found");
 
   const client = newClient(decryptSession(user.sessionString));
-  await client.connect();
+  try {
+    await client.connect();
+  } catch (err: any) {
+    if (/SESSION_REVOKED/i.test(err?.message || err?.errorMessage || "")) {
+      evictClientForUser(userId);
+    }
+    throw err;
+  }
   activeClients.set(userId, client);
   startTelegramSyncListener(client, userId).catch(() => {});
   return client;

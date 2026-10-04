@@ -1,6 +1,6 @@
 import test, { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { formatPartFilename, formatPartCaption } from "../src/telegram/fileService";
+import { formatPartFilename, formatPartCaption, DEFAULT_CHUNK_SIZE, getChunkSize, DEFAULT_RANGE_BURST, getRangeBurstSize } from "../src/telegram/fileService";
 
 describe("File Chunking & Calculations", () => {
   const MAX_CHUNK = 1900000000; // 1.90 GB
@@ -94,5 +94,188 @@ describe("File Chunking & Calculations", () => {
       "archive.zip.part010",
       "archive.zip.part012",
     ]);
+  });
+
+  it("should default to 30 MB chunk size for video streaming", () => {
+    assert.equal(DEFAULT_CHUNK_SIZE, 30 * 1024 * 1024);
+  });
+
+  it("should respect CHUNK_SIZE_BYTES or MAX_TELEGRAM_FILE_BYTES env overrides", () => {
+    const origChunk = process.env.CHUNK_SIZE_BYTES;
+    const origMax = process.env.MAX_TELEGRAM_FILE_BYTES;
+    try {
+      process.env.CHUNK_SIZE_BYTES = "52428800"; // 50 MB
+      assert.equal(getChunkSize(), 52428800);
+
+      delete process.env.CHUNK_SIZE_BYTES;
+      process.env.MAX_TELEGRAM_FILE_BYTES = "20971520"; // 20 MB
+      assert.equal(getChunkSize(), 20971520);
+    } finally {
+      if (origChunk !== undefined) process.env.CHUNK_SIZE_BYTES = origChunk;
+      else delete process.env.CHUNK_SIZE_BYTES;
+      if (origMax !== undefined) process.env.MAX_TELEGRAM_FILE_BYTES = origMax;
+      else delete process.env.MAX_TELEGRAM_FILE_BYTES;
+    }
+  });
+
+  it("should split a 120MB video into 4 streaming chunks of 30MB each", () => {
+    const videoSize = 120 * 1024 * 1024;
+    const chunkSize = 30 * 1024 * 1024;
+    const partsCount = computePartsCount(videoSize, chunkSize);
+    assert.equal(partsCount, 4);
+
+    const chunks = [];
+    for (let i = 0; i < partsCount; i++) {
+      const offset = i * chunkSize;
+      const length = Math.min(chunkSize, videoSize - offset);
+      chunks.push({ size: length });
+    }
+
+    const offsets = chunkOffsets(chunks);
+    assert.deepEqual(offsets, [0, 31457280, 62914560, 94371840]);
+  });
+
+  it("should isolate video start range request to only chunk 0 (0 to 1MB)", () => {
+    const videoSize = 120 * 1024 * 1024;
+    const chunkSize = 30 * 1024 * 1024; // 30MB parts
+    const partsCount = computePartsCount(videoSize, chunkSize);
+
+    const chunks = [];
+    for (let i = 0; i < partsCount; i++) {
+      const offset = i * chunkSize;
+      const length = Math.min(chunkSize, videoSize - offset);
+      chunks.push({ partIndex: i, size: length });
+    }
+    const offsets = chunkOffsets(chunks);
+
+    // Initial video buffer request: first 1MB (bytes 0 to 1,048,575)
+    const reqStart = 0;
+    const reqEnd = 1048575;
+    const touchedChunks: number[] = [];
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunkStart = offsets[i];
+      const chunkEnd = chunkStart + chunks[i].size - 1;
+      if (chunkEnd < reqStart || chunkStart > reqEnd) continue;
+      touchedChunks.push(chunks[i].partIndex);
+    }
+
+    // Only chunk 0 is fetched, NOT chunks 1, 2, 3!
+    assert.deepEqual(touchedChunks, [0], "Only chunk 0 should be fetched for initial video playback");
+  });
+
+  it("should default DEFAULT_RANGE_BURST to 30 MB and respect MAX_RANGE_BURST env override", () => {
+    assert.equal(DEFAULT_RANGE_BURST, 30 * 1024 * 1024);
+    assert.equal(getRangeBurstSize(), 30 * 1024 * 1024);
+
+    const origBurst = process.env.MAX_RANGE_BURST;
+    try {
+      process.env.MAX_RANGE_BURST = "15728640"; // 15 MB
+      assert.equal(getRangeBurstSize(), 15728640);
+    } finally {
+      if (origBurst !== undefined) process.env.MAX_RANGE_BURST = origBurst;
+      else delete process.env.MAX_RANGE_BURST;
+    }
+  });
+
+  it("should clamp open-ended Range requests (bytes=0-) to at most burst size (30MB) and touch only Chunk 0 on a 286MB video", () => {
+    const videoSize = 286679691; // User's real video size (273.4 MB)
+    const chunkSize = 30 * 1024 * 1024;
+    const partsCount = computePartsCount(videoSize, chunkSize); // 10 chunks
+    assert.equal(partsCount, 10);
+
+    const chunks = [];
+    for (let i = 0; i < partsCount; i++) {
+      const offset = i * chunkSize;
+      const length = Math.min(chunkSize, videoSize - offset);
+      chunks.push({ partIndex: i, size: length });
+    }
+    const offsets = chunkOffsets(chunks);
+
+    // Browser sends open-ended Range: bytes=0-
+    const rangeHeader = "bytes=0-";
+    const match = /bytes=(\d*)-(\d*)/.exec(rangeHeader);
+    const start = match?.[1] ? parseInt(match[1], 10) : 0;
+    const burstSize = getRangeBurstSize();
+    const rawEnd = match?.[2] ? parseInt(match[2], 10) : (start + burstSize - 1);
+    const clampedEnd = Math.min(rawEnd, start + burstSize - 1, videoSize - 1);
+
+    // Clamped end must be 31,457,279 (30 MB window), NOT 286,679,690 (all 273 MB!)
+    assert.equal(start, 0);
+    assert.equal(clampedEnd, 31457279);
+    assert.equal(clampedEnd - start + 1, 31457280);
+
+    // Find which chunks overlap [start, clampedEnd]
+    const touchedChunks: number[] = [];
+    for (let i = 0; i < chunks.length; i++) {
+      const chunkStart = offsets[i];
+      const chunkEnd = chunkStart + chunks[i].size - 1;
+      if (chunkEnd < start || chunkStart > clampedEnd) continue;
+      touchedChunks.push(chunks[i].partIndex);
+    }
+
+    // Only chunk 0 is touched! Chunks 1..9 (242 MB) are completely untouched!
+    assert.deepEqual(touchedChunks, [0], "Only chunk 0 should be touched for open-ended range request");
+  });
+
+  it("should clamp Mobile Safari full-size range requests (bytes=0-286679690) to burst window", () => {
+    const videoSize = 286679691;
+    const rangeHeader = "bytes=0-286679690";
+    const match = /bytes=(\d*)-(\d*)/.exec(rangeHeader);
+    const start = match?.[1] ? parseInt(match[1], 10) : 0;
+    const burstSize = getRangeBurstSize();
+    const rawEnd = match?.[2] ? parseInt(match[2], 10) : (start + burstSize - 1);
+    const clampedEnd = Math.min(rawEnd, start + burstSize - 1, videoSize - 1);
+
+    assert.equal(clampedEnd, 31457279, "Should cap oversized mobile range request to 30 MB burst");
+  });
+
+  it("should preserve Safari 2-byte probe request (bytes=0-1)", () => {
+    const videoSize = 286679691;
+    const rangeHeader = "bytes=0-1";
+    const match = /bytes=(\d*)-(\d*)/.exec(rangeHeader);
+    const start = match?.[1] ? parseInt(match[1], 10) : 0;
+    const burstSize = getRangeBurstSize();
+    const rawEnd = match?.[2] ? parseInt(match[2], 10) : (start + burstSize - 1);
+    const clampedEnd = Math.min(rawEnd, start + burstSize - 1, videoSize - 1);
+
+    assert.equal(start, 0);
+    assert.equal(clampedEnd, 1);
+    assert.equal(clampedEnd - start + 1, 2, "Should serve exactly 2 bytes for probe");
+  });
+
+  it("should touch only relevant chunks during middle seeking (bytes=150000000-)", () => {
+    const videoSize = 286679691;
+    const chunkSize = 30 * 1024 * 1024;
+    const partsCount = computePartsCount(videoSize, chunkSize);
+
+    const chunks = [];
+    for (let i = 0; i < partsCount; i++) {
+      const offset = i * chunkSize;
+      const length = Math.min(chunkSize, videoSize - offset);
+      chunks.push({ partIndex: i, size: length });
+    }
+    const offsets = chunkOffsets(chunks);
+
+    const rangeHeader = "bytes=150000000-";
+    const match = /bytes=(\d*)-(\d*)/.exec(rangeHeader);
+    const start = match?.[1] ? parseInt(match[1], 10) : 0;
+    const burstSize = getRangeBurstSize();
+    const rawEnd = match?.[2] ? parseInt(match[2], 10) : (start + burstSize - 1);
+    const clampedEnd = Math.min(rawEnd, start + burstSize - 1, videoSize - 1);
+
+    assert.equal(start, 150000000);
+    assert.equal(clampedEnd, 181457279); // 150MB + 30MB burst
+
+    const touchedChunks: number[] = [];
+    for (let i = 0; i < chunks.length; i++) {
+      const chunkStart = offsets[i];
+      const chunkEnd = chunkStart + chunks[i].size - 1;
+      if (chunkEnd < start || chunkStart > clampedEnd) continue;
+      touchedChunks.push(chunks[i].partIndex);
+    }
+
+    // Only chunks 4 (120MB-150MB) and 5 (150MB-180MB) are touched!
+    assert.deepEqual(touchedChunks, [4, 5], "Only chunks covering the seek position should be touched");
   });
 });
