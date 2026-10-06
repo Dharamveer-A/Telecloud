@@ -612,7 +612,7 @@ export default function Browser() {
     }
   }
 
-  async function init() {
+  async function init(retryCount = 0) {
     try {
       const res: any = await api.getRoot();
       if (res && res.rootFolderId) {
@@ -622,7 +622,12 @@ export default function Browser() {
       fetchTrash();
     } catch (e: any) {
       console.error("Init failed:", e);
-      setError(e.message || "Failed to load files");
+      if (retryCount < 4 && (e.message?.includes("502") || e.message?.includes("503") || e.message?.includes("Failed to fetch"))) {
+        setError("Connecting to server (waking up)...");
+        setTimeout(() => init(retryCount + 1), 2500);
+      } else {
+        setError(e.message || "Failed to load files");
+      }
     }
   }
   useEffect(() => { init(); }, []);
@@ -1947,7 +1952,22 @@ export default function Browser() {
                     <span>Loading...</span>
                   </span>
                 )}
-                {error && <span className="text-danger text-xs sm:text-sm ml-4">{error}</span>}
+                {error && (
+                  <div className="flex items-center gap-2 ml-3 shrink-0">
+                    <span className="text-danger text-xs sm:text-sm">{error}</span>
+                    <button
+                      onClick={() => {
+                        setError("");
+                        init();
+                      }}
+                      className="px-2 py-0.5 rounded text-xs bg-teal/15 hover:bg-teal/25 text-teal border border-teal/30 font-medium transition-colors flex items-center gap-1 cursor-pointer"
+                      title="Retry loading folder"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      <span>Retry</span>
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="px-6 py-2.5 bg-surface2/60 border-b border-line flex items-center justify-between text-xs animate-in fade-in shrink-0">
