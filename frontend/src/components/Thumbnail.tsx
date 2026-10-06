@@ -7,6 +7,10 @@ interface ThumbnailProps {
   password?: string;
 }
 
+// Module-level cache for blob object URLs so re-renders/navigation reuse cached images instantly
+const thumbBlobCache = new Map<string, string>();
+const failedThumbSet = new Set<string>();
+
 export default function Thumbnail({ fileId, mimeType, password }: ThumbnailProps) {
   const isImage = mimeType.startsWith("image/");
   const isVideo = mimeType.startsWith("video/");
@@ -14,11 +18,23 @@ export default function Thumbnail({ fileId, mimeType, password }: ThumbnailProps
   if (!isImage && !isVideo) return null;
 
   const [isVisible, setIsVisible] = useState(false);
-  const [loaded, setLoaded] = useState(false);
-  const [error, setError] = useState(false);
+  const [src, setSrc] = useState<string | null>(() => thumbBlobCache.get(fileId) || null);
+  const [loaded, setLoaded] = useState(() => thumbBlobCache.has(fileId));
+  const [error, setError] = useState(() => failedThumbSet.has(fileId));
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    // If already cached or marked as failed, no need to observe
+    if (thumbBlobCache.has(fileId)) {
+      setSrc(thumbBlobCache.get(fileId)!);
+      setLoaded(true);
+      return;
+    }
+    if (failedThumbSet.has(fileId)) {
+      setError(true);
+      return;
+    }
+
     const el = containerRef.current;
     if (!el) return;
 
@@ -34,22 +50,50 @@ export default function Thumbnail({ fileId, mimeType, password }: ThumbnailProps
           observer.disconnect();
         }
       },
-      { rootMargin: "250px" }
+      { rootMargin: "150px" }
     );
 
     observer.observe(el);
     return () => observer.disconnect();
   }, [fileId]);
 
-  const thumbUrl = isVisible ? api.thumbnailUrl(fileId, password) : undefined;
+  useEffect(() => {
+    if (!isVisible || thumbBlobCache.has(fileId) || failedThumbSet.has(fileId)) return;
+
+    const controller = new AbortController();
+    const url = api.thumbnailUrl(fileId, password);
+
+    fetch(url, { signal: controller.signal })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.blob();
+      })
+      .then((blob) => {
+        const objectUrl = URL.createObjectURL(blob);
+        thumbBlobCache.set(fileId, objectUrl);
+        setSrc(objectUrl);
+        setLoaded(true);
+      })
+      .catch((err) => {
+        if (err.name === "AbortError" || controller.signal.aborted) {
+          return; // Cancelled intentionally because component unmounted or was navigated away
+        }
+        failedThumbSet.add(fileId);
+        setError(true);
+      });
+
+    return () => {
+      // Abort in-flight network request immediately when navigating away or unmounting!
+      controller.abort();
+    };
+  }, [isVisible, fileId, password]);
 
   return (
     <div ref={containerRef} className="w-full h-full relative overflow-hidden flex items-center justify-center">
-      {thumbUrl && !error && (
+      {src && !error && (
         <img
-          src={thumbUrl}
+          src={src}
           alt=""
-          loading="lazy"
           onLoad={() => setLoaded(true)}
           onError={() => setError(true)}
           className={`w-full h-full object-cover transition-opacity duration-200 ${

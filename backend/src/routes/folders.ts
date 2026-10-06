@@ -32,23 +32,35 @@ router.get("/:folderId", async (req: AuthedRequest, res) => {
     }
   }
 
-  const subfolders = db.folders.subfolders(folder.id);
-  const files = db.files.byFolder(folder.id);
+  const subfolders = db.folders.subfoldersWithCounts
+    ? db.folders.subfoldersWithCounts(folder.id)
+    : db.folders.subfolders(folder.id).map((f) => ({
+        ...f,
+        itemCount: db.files.countByFolder(f.id) + db.folders.countSubfolders(f.id),
+      }));
+
+  const files = db.files.listingByFolder
+    ? db.files.listingByFolder(folder.id)
+    : db.files.byFolder(folder.id).map((f) => ({
+        id: f.id,
+        name: f.name,
+        size: f.size,
+        mimeType: f.mimeType,
+        createdAt: f.createdAt,
+        encrypted: f.encrypted,
+      }));
+
   res.json({
     folder,
     locked: false,
-    subfolders: subfolders.map((f) => {
-      const childFilesCount = db.files.countByFolder(f.id);
-      const childFoldersCount = db.folders.countSubfolders(f.id);
-      return {
-        id: f.id,
-        name: f.name,
-        locked: f.locked,
-        createdAt: f.createdAt,
-        itemCount: childFilesCount + childFoldersCount,
-      };
-    }),
-    files: files.map((f) => ({ id: f.id, name: f.name, size: f.size, mimeType: f.mimeType, createdAt: f.createdAt, encrypted: f.encrypted })),
+    subfolders: subfolders.map((f) => ({
+      id: f.id,
+      name: f.name,
+      locked: f.locked,
+      createdAt: f.createdAt,
+      itemCount: f.itemCount,
+    })),
+    files,
   });
 });
 

@@ -7,7 +7,28 @@ const DATA_DIR = process.env.DATA_DIR || "./data";
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const dbPath = path.join(DATA_DIR, "db.sqlite");
-export const sqlite = new Database(dbPath);
+
+// Lazy singleton — opened on first access so that a db restore (e.g. from
+// Telegram backup) can overwrite the file before we open it.
+let _sqliteInstance: InstanceType<typeof Database> | null = null;
+export function getSqliteInstance(): InstanceType<typeof Database> {
+  if (!_sqliteInstance) {
+    _sqliteInstance = new Database(dbPath);
+  }
+  return _sqliteInstance;
+}
+
+// Convenience proxy that forwards property accesses to the lazy instance.
+// Existing code that uses `sqlite.prepare(...)` etc. continues to work.
+export const sqlite = new Proxy({} as InstanceType<typeof Database>, {
+  get(_target, prop) {
+    return (getSqliteInstance() as any)[prop];
+  },
+  set(_target, prop, value) {
+    (getSqliteInstance() as any)[prop] = value;
+    return true;
+  },
+});
 
 // Enable WAL mode for high concurrency
 sqlite.pragma("journal_mode = WAL");
@@ -271,11 +292,25 @@ const stmts = {
   countSubfolders: sqlite.prepare(
     "SELECT COUNT(*) as count FROM folders WHERE parentId = ? AND deletedAt IS NULL"
   ),
+  getSubfoldersWithCounts: sqlite.prepare(`
+    SELECT 
+      f.id, f.parentId, f.name, f.createdAt, f.locked, f.deletedAt, f.topicId,
+      (
+        (SELECT COUNT(*) FROM files WHERE folderId = f.id AND deletedAt IS NULL) +
+        (SELECT COUNT(*) FROM folders WHERE parentId = f.id AND deletedAt IS NULL)
+      ) AS itemCount
+    FROM folders f
+    WHERE f.parentId = ? AND f.deletedAt IS NULL
+    ORDER BY f.createdAt ASC
+  `),
 
   // Files
   getFile: sqlite.prepare("SELECT * FROM files WHERE id = ?"),
   getFilesInFolder: sqlite.prepare(
     "SELECT * FROM files WHERE folderId = ? AND deletedAt IS NULL ORDER BY createdAt ASC"
+  ),
+  getFolderListingFiles: sqlite.prepare(
+    "SELECT id, name, size, mimeType, createdAt, encrypted FROM files WHERE folderId = ? AND deletedAt IS NULL ORDER BY createdAt ASC"
   ),
   countFilesInFolder: sqlite.prepare(
     "SELECT COUNT(*) as count FROM files WHERE folderId = ? AND deletedAt IS NULL"
@@ -358,6 +393,13 @@ export const sqliteDb = {
   countSubfolders(parentId: string | null): number {
     const row = stmts.countSubfolders.get(parentId) as any;
     return row ? Number(row.count) : 0;
+  },
+  getSubfoldersWithCounts(parentId: string | null): (FolderRecord & { itemCount: number })[] {
+    const rows = stmts.getSubfoldersWithCounts.all(parentId) as any[];
+    return rows.map((row) => ({
+      ...mapFolder(row),
+      itemCount: Number(row.itemCount || 0),
+    }));
   },
   getAllFolders(): FolderRecord[] {
     const rows = stmts.getAllFolders.all() as any[];
@@ -493,6 +535,24 @@ export const sqliteDb = {
   getFilesInFolder(folderId: string): FileRecord[] {
     const rows = stmts.getFilesInFolder.all(folderId) as any[];
     return rows.map(mapFile);
+  },
+  getFolderListingFiles(folderId: string): Array<{
+    id: string;
+    name: string;
+    size: number;
+    mimeType: string;
+    createdAt: number;
+    encrypted: boolean;
+  }> {
+    const rows = stmts.getFolderListingFiles.all(folderId) as any[];
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      size: Number(r.size),
+      mimeType: r.mimeType,
+      createdAt: Number(r.createdAt),
+      encrypted: Boolean(r.encrypted),
+    }));
   },
   countFilesInFolder(folderId: string): number {
     const row = stmts.countFilesInFolder.get(folderId) as any;

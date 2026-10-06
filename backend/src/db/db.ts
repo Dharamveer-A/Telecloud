@@ -113,6 +113,7 @@ export const db = {
   folders: {
     get: sqliteDb.getFolder,
     subfolders: sqliteDb.getSubfolders,
+    subfoldersWithCounts: sqliteDb.getSubfoldersWithCounts,
     countSubfolders: sqliteDb.countSubfolders,
     all: sqliteDb.getAllFolders,
     allRaw: sqliteDb.getAllFoldersRaw,
@@ -125,6 +126,7 @@ export const db = {
   files: {
     get: sqliteDb.getFile,
     byFolder: sqliteDb.getFilesInFolder,
+    listingByFolder: sqliteDb.getFolderListingFiles,
     countByFolder: sqliteDb.countFilesInFolder,
     allRaw: sqliteDb.getAllFilesRaw,
     create: sqliteDb.createFile,

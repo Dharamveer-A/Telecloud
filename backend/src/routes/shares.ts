@@ -500,9 +500,13 @@ publicSharesRouter.get("/:token/files/:fileId", async (req, res) => {
   if (rangeHeader && !file.encrypted) {
     const match = /bytes=(\d*)-(\d*)/.exec(rangeHeader);
     const start = match?.[1] ? parseInt(match[1], 10) : 0;
-    const burstSize = getRangeBurstSize();
-    const rawEnd = match?.[2] ? parseInt(match[2], 10) : (start + burstSize - 1);
-    const clampedEnd = Math.min(rawEnd, start + burstSize - 1, file.size - 1);
+    const burstSize = getRangeBurstSize(file.mimeType, file.name);
+    const rawEnd = match?.[2]
+      ? parseInt(match[2], 10)
+      : (burstSize ? start + burstSize - 1 : file.size - 1);
+    const clampedEnd = burstSize
+      ? Math.min(rawEnd, start + burstSize - 1, file.size - 1)
+      : Math.min(rawEnd, file.size - 1);
 
     if (start > clampedEnd || start >= file.size) {
       res.status(416);
@@ -671,9 +675,13 @@ publicSharesRouter.get("/:token/download", async (req, res) => {
     if (rangeHeader && !file.encrypted) {
       const match = /bytes=(\d*)-(\d*)/.exec(rangeHeader);
       const start = match?.[1] ? parseInt(match[1], 10) : 0;
-      const burstSize = getRangeBurstSize();
-      const rawEnd = match?.[2] ? parseInt(match[2], 10) : (start + burstSize - 1);
-      const clampedEnd = Math.min(rawEnd, start + burstSize - 1, file.size - 1);
+      const burstSize = getRangeBurstSize(file.mimeType, file.name);
+      const rawEnd = match?.[2]
+        ? parseInt(match[2], 10)
+        : (burstSize ? start + burstSize - 1 : file.size - 1);
+      const clampedEnd = burstSize
+        ? Math.min(rawEnd, start + burstSize - 1, file.size - 1)
+        : Math.min(rawEnd, file.size - 1);
 
       if (start > clampedEnd || start >= file.size) {
         res.status(416);

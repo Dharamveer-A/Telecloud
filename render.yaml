@@ -1,0 +1,49 @@
+# render.yaml — Free lifetime hosting for TeleCloud on Render.com
+# Deploy with: connect GitHub repo → Render auto-detects this file
+#
+# Architecture:
+#   • One free Render web service runs both the Node.js backend AND serves
+#     the pre-built React frontend (no separate frontend service needed).
+#   • SQLite is backed up to Telegram Saved Messages every 2 minutes and
+#     restored on startup — zero cost, zero external database service.
+#   • UptimeRobot (free) pings /api/health every 5 min to prevent sleep.
+#
+# After deploying, set these env vars in Render dashboard:
+#   TELEGRAM_API_ID, TELEGRAM_API_HASH, MASTER_ENCRYPTION_KEY, JWT_SECRET,
+#   BOOTSTRAP_TELEGRAM_SESSION (your encrypted session string from db.sqlite)
+
+services:
+  - type: web
+    name: telecloud
+    runtime: node
+    plan: free                          # Free forever — no card charged
+    region: singapore                   # Closest to India = lowest latency
+    rootDir: .
+    buildCommand: >
+      cd frontend && npm ci && npm run build &&
+      cd ../backend && npm ci && npm run build &&
+      cp -r ../frontend/dist ./dist/frontend_dist
+    startCommand: node dist/index.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 4000
+      - key: RENDER
+        value: "true"                   # Enables Telegram DB backup/restore
+      - key: AUTO_TUNNEL
+        value: "false"                  # Disable tunnel on Render (has public URL)
+      - key: DATA_DIR
+        value: /tmp/telecloud_data      # Ephemeral disk — backed up to Telegram
+      # ── Set these in Render Dashboard → Environment ──
+      - key: TELEGRAM_API_ID
+        sync: false
+      - key: TELEGRAM_API_HASH
+        sync: false
+      - key: MASTER_ENCRYPTION_KEY
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: BOOTSTRAP_TELEGRAM_SESSION
+        sync: false                     # Your session string — enables DB restore

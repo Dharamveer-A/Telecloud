@@ -14,6 +14,12 @@ async function request(path: string, options: RequestInit = {}) {
     },
   });
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && !path.startsWith("/auth/")) {
+    clearToken();
+    if (typeof window !== "undefined" && window.location.pathname !== "/login" && !window.location.pathname.startsWith("/share/")) {
+      window.location.href = "/login";
+    }
+  }
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
   return data;
 }

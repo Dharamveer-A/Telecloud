@@ -1,6 +1,6 @@
 import test, { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { formatPartFilename, formatPartCaption, DEFAULT_CHUNK_SIZE, getChunkSize, DEFAULT_RANGE_BURST, getRangeBurstSize } from "../src/telegram/fileService";
+import { formatPartFilename, formatPartCaption, DEFAULT_CHUNK_SIZE, getChunkSize, DEFAULT_RANGE_BURST, getRangeBurstSize, MAX_TELEGRAM_CHUNK, VIDEO_STREAMING_CHUNK, isMediaFile } from "../src/telegram/fileService";
 
 describe("File Chunking & Calculations", () => {
   const MAX_CHUNK = 1900000000; // 1.90 GB
@@ -96,20 +96,59 @@ describe("File Chunking & Calculations", () => {
     ]);
   });
 
-  it("should default to 30 MB chunk size for video streaming", () => {
+  it("should default to 30 MB chunk size for video streaming and 1.90 GB for non-media files", () => {
     assert.equal(DEFAULT_CHUNK_SIZE, 30 * 1024 * 1024);
+    assert.equal(VIDEO_STREAMING_CHUNK, 30 * 1024 * 1024);
+    assert.equal(MAX_TELEGRAM_CHUNK, 1900000000);
   });
 
-  it("should respect CHUNK_SIZE_BYTES or MAX_TELEGRAM_FILE_BYTES env overrides", () => {
+  it("should correctly identify media files by MIME type or extension", () => {
+    assert.equal(isMediaFile("video/mp4"), true);
+    assert.equal(isMediaFile("video/webm"), true);
+    assert.equal(isMediaFile("audio/mpeg"), true);
+    assert.equal(isMediaFile("audio/wav"), true);
+    assert.equal(isMediaFile(undefined, "movie.mkv"), true);
+    assert.equal(isMediaFile(undefined, "song.flac"), true);
+    assert.equal(isMediaFile(undefined, "clip.mov"), true);
+
+    assert.equal(isMediaFile("application/zip", "archive.zip"), false);
+    assert.equal(isMediaFile("application/pdf", "manual.pdf"), false);
+    assert.equal(isMediaFile("application/octet-stream", "disk.iso"), false);
+    assert.equal(isMediaFile(undefined, "installer.dmg"), false);
+  });
+
+  it("should assign 30 MB chunking to media and 1.90 GB to non-media files", () => {
+    assert.equal(getChunkSize("video/mp4", "video.mp4"), 30 * 1024 * 1024);
+    assert.equal(getChunkSize("audio/ogg", "music.ogg"), 30 * 1024 * 1024);
+    assert.equal(getChunkSize(undefined, "recording.mov"), 30 * 1024 * 1024);
+
+    assert.equal(getChunkSize("application/zip", "archive.zip"), 1900000000);
+    assert.equal(getChunkSize("application/pdf", "report.pdf"), 1900000000);
+    assert.equal(getChunkSize(undefined, "game.iso"), 1900000000);
+    assert.equal(getChunkSize(undefined, "backup.tar"), 1900000000);
+  });
+
+  it("should keep a 1.50 GB ZIP file as 1 single part instead of 50 separate 30MB parts", () => {
+    const zipSize = 1500000000; // 1.50 GB
+    const zipChunkSize = getChunkSize("application/zip", "backup.zip");
+    assert.equal(zipChunkSize, 1900000000);
+
+    const partsCount = computePartsCount(zipSize, zipChunkSize);
+    assert.equal(partsCount, 1, "1.50 GB ZIP file must be uploaded as 1 single Telegram message");
+  });
+
+  it("should respect CHUNK_SIZE_BYTES for media and MAX_TELEGRAM_FILE_BYTES for non-media env overrides", () => {
     const origChunk = process.env.CHUNK_SIZE_BYTES;
     const origMax = process.env.MAX_TELEGRAM_FILE_BYTES;
     try {
       process.env.CHUNK_SIZE_BYTES = "52428800"; // 50 MB
-      assert.equal(getChunkSize(), 52428800);
+      assert.equal(getChunkSize("video/mp4", "clip.mp4"), 52428800);
 
       delete process.env.CHUNK_SIZE_BYTES;
-      process.env.MAX_TELEGRAM_FILE_BYTES = "20971520"; // 20 MB
-      assert.equal(getChunkSize(), 20971520);
+      assert.equal(getChunkSize("video/mp4", "clip.mp4"), 30 * 1024 * 1024);
+
+      process.env.MAX_TELEGRAM_FILE_BYTES = "1500000000"; // 1.50 GB
+      assert.equal(getChunkSize("application/zip", "archive.zip"), 1500000000);
     } finally {
       if (origChunk !== undefined) process.env.CHUNK_SIZE_BYTES = origChunk;
       else delete process.env.CHUNK_SIZE_BYTES;
@@ -120,7 +159,8 @@ describe("File Chunking & Calculations", () => {
 
   it("should split a 120MB video into 4 streaming chunks of 30MB each", () => {
     const videoSize = 120 * 1024 * 1024;
-    const chunkSize = 30 * 1024 * 1024;
+    const chunkSize = getChunkSize("video/mp4", "video.mp4");
+    assert.equal(chunkSize, 30 * 1024 * 1024);
     const partsCount = computePartsCount(videoSize, chunkSize);
     assert.equal(partsCount, 4);
 
@@ -137,7 +177,7 @@ describe("File Chunking & Calculations", () => {
 
   it("should isolate video start range request to only chunk 0 (0 to 1MB)", () => {
     const videoSize = 120 * 1024 * 1024;
-    const chunkSize = 30 * 1024 * 1024; // 30MB parts
+    const chunkSize = getChunkSize("video/mp4", "video.mp4");
     const partsCount = computePartsCount(videoSize, chunkSize);
 
     const chunks = [];
@@ -164,14 +204,20 @@ describe("File Chunking & Calculations", () => {
     assert.deepEqual(touchedChunks, [0], "Only chunk 0 should be fetched for initial video playback");
   });
 
-  it("should default DEFAULT_RANGE_BURST to 30 MB and respect MAX_RANGE_BURST env override", () => {
+  it("should restrict range burst window to media streaming requests", () => {
     assert.equal(DEFAULT_RANGE_BURST, 30 * 1024 * 1024);
-    assert.equal(getRangeBurstSize(), 30 * 1024 * 1024);
+    // Media streaming returns 30 MB burst
+    assert.equal(getRangeBurstSize("video/mp4", "video.mp4"), 30 * 1024 * 1024);
+    assert.equal(getRangeBurstSize("audio/mpeg", "song.mp3"), 30 * 1024 * 1024);
+
+    // Non-media download returns undefined (unrestricted)
+    assert.equal(getRangeBurstSize("application/zip", "file.zip"), undefined);
+    assert.equal(getRangeBurstSize("application/pdf", "doc.pdf"), undefined);
 
     const origBurst = process.env.MAX_RANGE_BURST;
     try {
       process.env.MAX_RANGE_BURST = "15728640"; // 15 MB
-      assert.equal(getRangeBurstSize(), 15728640);
+      assert.equal(getRangeBurstSize("video/mp4", "video.mp4"), 15728640);
     } finally {
       if (origBurst !== undefined) process.env.MAX_RANGE_BURST = origBurst;
       else delete process.env.MAX_RANGE_BURST;
@@ -180,7 +226,7 @@ describe("File Chunking & Calculations", () => {
 
   it("should clamp open-ended Range requests (bytes=0-) to at most burst size (30MB) and touch only Chunk 0 on a 286MB video", () => {
     const videoSize = 286679691; // User's real video size (273.4 MB)
-    const chunkSize = 30 * 1024 * 1024;
+    const chunkSize = getChunkSize("video/mp4", "video.mp4");
     const partsCount = computePartsCount(videoSize, chunkSize); // 10 chunks
     assert.equal(partsCount, 10);
 
@@ -196,7 +242,7 @@ describe("File Chunking & Calculations", () => {
     const rangeHeader = "bytes=0-";
     const match = /bytes=(\d*)-(\d*)/.exec(rangeHeader);
     const start = match?.[1] ? parseInt(match[1], 10) : 0;
-    const burstSize = getRangeBurstSize();
+    const burstSize = getRangeBurstSize("video/mp4", "video.mp4")!;
     const rawEnd = match?.[2] ? parseInt(match[2], 10) : (start + burstSize - 1);
     const clampedEnd = Math.min(rawEnd, start + burstSize - 1, videoSize - 1);
 
@@ -223,7 +269,7 @@ describe("File Chunking & Calculations", () => {
     const rangeHeader = "bytes=0-286679690";
     const match = /bytes=(\d*)-(\d*)/.exec(rangeHeader);
     const start = match?.[1] ? parseInt(match[1], 10) : 0;
-    const burstSize = getRangeBurstSize();
+    const burstSize = getRangeBurstSize("video/mp4", "video.mp4")!;
     const rawEnd = match?.[2] ? parseInt(match[2], 10) : (start + burstSize - 1);
     const clampedEnd = Math.min(rawEnd, start + burstSize - 1, videoSize - 1);
 
@@ -235,7 +281,7 @@ describe("File Chunking & Calculations", () => {
     const rangeHeader = "bytes=0-1";
     const match = /bytes=(\d*)-(\d*)/.exec(rangeHeader);
     const start = match?.[1] ? parseInt(match[1], 10) : 0;
-    const burstSize = getRangeBurstSize();
+    const burstSize = getRangeBurstSize("video/mp4", "video.mp4")!;
     const rawEnd = match?.[2] ? parseInt(match[2], 10) : (start + burstSize - 1);
     const clampedEnd = Math.min(rawEnd, start + burstSize - 1, videoSize - 1);
 
@@ -246,7 +292,7 @@ describe("File Chunking & Calculations", () => {
 
   it("should touch only relevant chunks during middle seeking (bytes=150000000-)", () => {
     const videoSize = 286679691;
-    const chunkSize = 30 * 1024 * 1024;
+    const chunkSize = getChunkSize("video/mp4", "video.mp4");
     const partsCount = computePartsCount(videoSize, chunkSize);
 
     const chunks = [];
@@ -260,7 +306,7 @@ describe("File Chunking & Calculations", () => {
     const rangeHeader = "bytes=150000000-";
     const match = /bytes=(\d*)-(\d*)/.exec(rangeHeader);
     const start = match?.[1] ? parseInt(match[1], 10) : 0;
-    const burstSize = getRangeBurstSize();
+    const burstSize = getRangeBurstSize("video/mp4", "video.mp4")!;
     const rawEnd = match?.[2] ? parseInt(match[2], 10) : (start + burstSize - 1);
     const clampedEnd = Math.min(rawEnd, start + burstSize - 1, videoSize - 1);
 

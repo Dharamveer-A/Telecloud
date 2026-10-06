@@ -75,6 +75,7 @@ function iconFor(mime: string) {
 function FolderTreeNode({
   node,
   allFolders,
+  folderChildrenMap,
   currentPath,
   inTrash,
   onSelect,
@@ -83,13 +84,14 @@ function FolderTreeNode({
 }: {
   node: any;
   allFolders: any[];
+  folderChildrenMap?: Map<string, any[]>;
   currentPath: Crumb[];
   inTrash?: boolean;
   onSelect: (node: any) => void;
   onDropToNode?: (e: React.DragEvent, node: any) => void;
   depth?: number;
 }) {
-  const children = allFolders.filter((f) => f.parentId === node.id);
+  const children = folderChildrenMap ? (folderChildrenMap.get(node.id) || []) : allFolders.filter((f) => f.parentId === node.id);
   const isOpen = currentPath.some((c) => c.id === node.id) || depth === 0; // auto open if in path or root
   const [expanded, setExpanded] = useState(isOpen);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -150,6 +152,7 @@ function FolderTreeNode({
               key={child.id}
               node={child}
               allFolders={allFolders}
+              folderChildrenMap={folderChildrenMap}
               currentPath={currentPath}
               inTrash={inTrash}
               onSelect={onSelect}
@@ -174,6 +177,8 @@ export default function Browser() {
   const [passwordError, setPasswordError] = useState("");
   const [preview, setPreview] = useState<FileItem | null>(null);
   const [error, setError] = useState("");
+  const [isLoadingFolder, setIsLoadingFolder] = useState(false);
+  const [visibleFileCount, setVisibleFileCount] = useState(80);
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [showLockSetup, setShowLockSetup] = useState(false);
@@ -457,6 +462,15 @@ export default function Browser() {
   const [activeFilter, setActiveFilter] = useState<ActiveFilter>(null);
   const [customFilters, setCustomFilters] = useState<CustomFilter[]>(() => loadCustomFilters());
   const [allFolders, setAllFolders] = useState<any[]>([]);
+  const folderChildrenMap = useMemo(() => {
+    const map = new Map<string, any[]>();
+    for (const f of allFolders) {
+      const p = f.parentId || "root";
+      if (!map.has(p)) map.set(p, []);
+      map.get(p)!.push(f);
+    }
+    return map;
+  }, [allFolders]);
   const dragCounter = useRef(0);
 
   const filePicker = useRef<HTMLInputElement>(null);
@@ -498,6 +512,7 @@ export default function Browser() {
     }
     const controller = new AbortController();
     openFolderAbortRef.current = controller;
+    setIsLoadingFolder(true);
 
     const password = passwordOverride !== undefined ? passwordOverride : passwords[id];
     try {
@@ -506,10 +521,11 @@ export default function Browser() {
         setPendingLock({ id, name, locked: true });
         return;
       }
-      setSubfolders(res.subfolders);
-      setFiles(res.files);
+      setSubfolders(res.subfolders || []);
+      setFiles(res.files || []);
       const newPath = crumbSlice ? [...crumbSlice, { id, name, locked }] : [...path, { id, name, locked }];
       setPath(newPath);
+      setVisibleFileCount(80);
 
       const pathIds = new Set(newPath.map(c => c.id));
       setPasswords(prev => {
@@ -528,6 +544,10 @@ export default function Browser() {
         return;
       }
       setError(e.message);
+    } finally {
+      if (openFolderAbortRef.current === controller) {
+        setIsLoadingFolder(false);
+      }
     }
   }
 
@@ -535,8 +555,8 @@ export default function Browser() {
     if (!current) return;
     const res: any = await api.getFolder(current.id, passwords[current.id]);
     if (!res.locked) {
-      setSubfolders(res.subfolders);
-      setFiles(res.files);
+      setSubfolders(res.subfolders || []);
+      setFiles(res.files || []);
     }
     fetchTree();
     fetchTrash();
@@ -572,6 +592,10 @@ export default function Browser() {
   function goToCrumb(index: number) {
     setInTrash(false);
     const target = path[index];
+    if (!target) {
+      init();
+      return;
+    }
     openFolder(target.id, target.name, target.locked, path.slice(0, index));
   }
 
@@ -920,6 +944,10 @@ export default function Browser() {
     return list;
   }, [filteredFiles, sortBy]);
 
+  const displayedFiles = useMemo(() => {
+    return sortedFiles.slice(0, visibleFileCount);
+  }, [sortedFiles, visibleFileCount]);
+
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
   function handleMainContextMenu(e: React.MouseEvent) {
@@ -1201,6 +1229,7 @@ export default function Browser() {
                 key={rootNode.id} 
                 node={rootNode} 
                 allFolders={allFolders} 
+                folderChildrenMap={folderChildrenMap}
                 currentPath={path} 
                 inTrash={inTrash}
                 onDropToNode={handleFolderDrop}
@@ -1353,6 +1382,7 @@ export default function Browser() {
                     key={rootNode.id} 
                     node={rootNode} 
                     allFolders={allFolders} 
+                    folderChildrenMap={folderChildrenMap}
                     currentPath={path} 
                     inTrash={inTrash}
                     onDropToNode={handleFolderDrop}
@@ -1691,6 +1721,12 @@ export default function Browser() {
               onRemoveCustom={removeCustomFilter}
             />
 
+            {isLoadingFolder && (
+              <div className="h-0.5 w-full bg-surface2 overflow-hidden relative">
+                <div className="h-full bg-teal animate-pulse w-full"></div>
+              </div>
+            )}
+
             {!isGlobalSearch ? (
               <div className="px-4 sm:px-6 py-2 sm:py-2.5 border-b border-line flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm overflow-x-auto no-scrollbar">
                 {path.length > 1 && (
@@ -1730,6 +1766,12 @@ export default function Browser() {
                     </button>
                   </span>
                 ))}
+                {isLoadingFolder && (
+                  <span className="text-dim text-xs ml-3 flex items-center gap-1.5 animate-pulse shrink-0">
+                    <span className="w-1.5 h-1.5 rounded-full bg-teal animate-ping"></span>
+                    <span>Loading...</span>
+                  </span>
+                )}
                 {error && <span className="text-danger text-xs sm:text-sm ml-4">{error}</span>}
               </div>
             ) : (
@@ -2004,7 +2046,7 @@ export default function Browser() {
                   )}
                 </div>
               ))}
-              {sortedFiles.map((f) => (
+              {displayedFiles.map((f) => (
                 <div
                   key={f.id}
                   draggable
@@ -2050,6 +2092,19 @@ export default function Browser() {
                   </button>
                 </div>
               ))}
+              {sortedFiles.length > displayedFiles.length && (
+                <div className="col-span-full py-6 flex flex-col items-center justify-center gap-2">
+                  <div className="text-xs text-dim">
+                    Showing {displayedFiles.length} of {sortedFiles.length} files
+                  </div>
+                  <button
+                    onClick={() => setVisibleFileCount((prev) => prev + 80)}
+                    className="px-4 py-1.5 rounded-lg border border-line bg-surface hover:bg-surface2 text-sm font-medium text-paper transition-colors shadow-xs"
+                  >
+                    Load more files ({sortedFiles.length - displayedFiles.length} remaining)
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <div className="border border-line rounded overflow-hidden">
@@ -2105,7 +2160,7 @@ export default function Browser() {
                   </div>
                 </div>
               ))}
-              {sortedFiles.map((f) => (
+              {displayedFiles.map((f) => (
                 <div
                   key={f.id}
                   draggable
@@ -2146,6 +2201,19 @@ export default function Browser() {
                   </div>
                 </div>
               ))}
+              {sortedFiles.length > displayedFiles.length && (
+                <div className="py-4 flex flex-col items-center justify-center gap-2 border-t border-line bg-surface/30">
+                  <div className="text-xs text-dim">
+                    Showing {displayedFiles.length} of {sortedFiles.length} files
+                  </div>
+                  <button
+                    onClick={() => setVisibleFileCount((prev) => prev + 80)}
+                    className="px-4 py-1.5 rounded-lg border border-line bg-surface hover:bg-surface2 text-sm font-medium text-paper transition-colors shadow-xs"
+                  >
+                    Load more files ({sortedFiles.length - displayedFiles.length} remaining)
+                  </button>
+                </div>
+              )}
             </div>
           )}
           </>

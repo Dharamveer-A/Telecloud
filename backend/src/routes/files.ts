@@ -183,15 +183,54 @@ router.post("/upload", upload.single("file"), async (req: AuthedRequest, res) =>
 });
 
 const inFlightThumbnails = new Map<string, Promise<Buffer | null>>();
+const failedThumbnailCache = new Map<string, number>();
+
+let activeThumbnailFetches = 0;
+const MAX_CONCURRENT_THUMBNAIL_FETCHES = 3;
+const thumbnailQueue: Array<() => void> = [];
+
+function acquireThumbnailSlot(): Promise<() => void> {
+  if (activeThumbnailFetches < MAX_CONCURRENT_THUMBNAIL_FETCHES) {
+    activeThumbnailFetches++;
+    let released = false;
+    return Promise.resolve(() => {
+      if (released) return;
+      released = true;
+      activeThumbnailFetches--;
+      const next = thumbnailQueue.shift();
+      if (next) next();
+    });
+  }
+  return new Promise((resolve) => {
+    thumbnailQueue.push(() => {
+      activeThumbnailFetches++;
+      let released = false;
+      resolve(() => {
+        if (released) return;
+        released = true;
+        activeThumbnailFetches--;
+        const next = thumbnailQueue.shift();
+        if (next) next();
+      });
+    });
+  });
+}
 
 router.get("/:fileId/thumbnail", async (req: AuthedRequest, res) => {
-  const file = db.files.get(req.params.fileId);
+  const fileId = req.params.fileId;
+  const file = db.files.get(fileId);
   if (!file) return res.status(404).json({ error: "File not found" });
 
   const isImage = file.mimeType?.startsWith("image/");
   const isVideo = file.mimeType?.startsWith("video/");
   if (!isImage && !isVideo) {
     return res.status(404).json({ error: "No thumbnail for this file type" });
+  }
+
+  // Fast check: Negative failure cache (prevents hammering Telegram when no thumb exists)
+  const failedUntil = failedThumbnailCache.get(fileId);
+  if (failedUntil && Date.now() < failedUntil) {
+    return res.status(404).json({ error: "Thumbnail not available" });
   }
 
   const cacheDir = path.join(process.env.DATA_DIR || "./data", "thumbnails");
@@ -210,19 +249,18 @@ router.get("/:fileId/thumbnail", async (req: AuthedRequest, res) => {
 
   // Check folder password if locked
   const folder = db.folders.get(file.folderId);
-  let fileKey: Buffer | undefined;
   if (folder?.locked) {
     const password = (req.query.password as string) || "";
     if (!folder.passwordHash || !folder.salt || !verifyFolderPassword(password, folder.passwordHash, folder.salt)) {
       return res.status(403).json({ error: "Wrong or missing folder password" });
     }
-    fileKey = deriveFolderFileKey(password, folder.salt);
   }
 
   // Deduplicate in-flight fetch for the same thumbnail
   let fetchPromise = inFlightThumbnails.get(file.id);
   if (!fetchPromise) {
     fetchPromise = (async () => {
+      const releaseSlot = await acquireThumbnailSlot();
       try {
         const client = await getClientForUser(req.userId!);
         const chunk = file.chunks[0];
@@ -232,38 +270,44 @@ router.get("/:fileId/thumbnail", async (req: AuthedRequest, res) => {
           ? inputPeerFor({ chatId: chunk.chatId, accessHash: chunk.accessHash } as any)
           : await getInputPeerForChatId(client, chunk.chatId);
 
-        const [msg] = await client.getMessages(peer, { ids: [chunk.messageId] });
-        if (!msg) return null;
+        // Fetch with a 3.5s timeout so MTProto never locks Express
+        const fetchWork = async (): Promise<Buffer | null> => {
+          const [msg] = await client.getMessages(peer, { ids: [chunk.messageId] });
+          if (!msg) return null;
 
-        let thumbBuf: Buffer | undefined;
-        // Attempt to download Telegram's native thumbnail
-        try {
-          thumbBuf = (await client.downloadMedia(msg, { thumb: 0 })) as Buffer;
-          if (!thumbBuf || thumbBuf.length === 0) {
-            thumbBuf = (await client.downloadMedia(msg, { thumb: -1 })) as Buffer;
+          let thumbBuf: Buffer | undefined;
+          // Attempt to download Telegram's native thumbnail
+          try {
+            thumbBuf = (await client.downloadMedia(msg, { thumb: 0 })) as Buffer;
+            if (!thumbBuf || thumbBuf.length === 0) {
+              thumbBuf = (await client.downloadMedia(msg, { thumb: -1 })) as Buffer;
+            }
+          } catch {}
+
+          if (thumbBuf && thumbBuf.length > 0) {
+            await fs.writeFile(cachePath, thumbBuf).catch(() => {});
+            return thumbBuf;
           }
-        } catch {}
 
-        if (thumbBuf && thumbBuf.length > 0) {
-          await fs.writeFile(cachePath, thumbBuf).catch(() => {});
-          return thumbBuf;
-        }
-
-        // If Telegram didn't store a separate thumbnail:
-        // For unencrypted images <= 8MB, download the image buffer and cache it
-        if (isImage && !file.encrypted && file.size <= 8 * 1024 * 1024) {
-          const imgBuf = (await client.downloadMedia(msg)) as Buffer;
-          if (imgBuf && imgBuf.length > 0) {
-            await fs.writeFile(cachePath, imgBuf).catch(() => {});
-            return imgBuf;
+          // If Telegram didn't store a separate thumbnail:
+          // Only fetch full image buffer if it's very small (<= 256KB)
+          if (isImage && !file.encrypted && file.size <= 256 * 1024) {
+            const imgBuf = (await client.downloadMedia(msg)) as Buffer;
+            if (imgBuf && imgBuf.length > 0) {
+              await fs.writeFile(cachePath, imgBuf).catch(() => {});
+              return imgBuf;
+            }
           }
-        }
 
-        return null;
+          return null;
+        };
+
+        const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 3500));
+        return await Promise.race([fetchWork(), timeoutPromise]);
       } catch (err) {
-        console.error(`Error generating thumbnail for ${file.id}:`, err);
         return null;
       } finally {
+        releaseSlot();
         inFlightThumbnails.delete(file.id);
       }
     })();
@@ -277,6 +321,8 @@ router.get("/:fileId/thumbnail", async (req: AuthedRequest, res) => {
     return res.send(result);
   }
 
+  // Cache failure for 2 minutes so we don't re-query Telegram repeatedly
+  failedThumbnailCache.set(fileId, Date.now() + 120000);
   return res.status(404).json({ error: "Thumbnail not available" });
 });
 
@@ -309,9 +355,13 @@ router.get("/:fileId/download", async (req: AuthedRequest, res) => {
     if (rangeHeader && !file.encrypted) {
       const match = /bytes=(\d*)-(\d*)/.exec(rangeHeader);
       const start = match?.[1] ? parseInt(match[1], 10) : 0;
-      const burstSize = getRangeBurstSize();
-      const rawEnd = match?.[2] ? parseInt(match[2], 10) : (start + burstSize - 1);
-      const clampedEnd = Math.min(rawEnd, start + burstSize - 1, file.size - 1);
+      const burstSize = getRangeBurstSize(file.mimeType, file.name);
+      const rawEnd = match?.[2]
+        ? parseInt(match[2], 10)
+        : (burstSize ? start + burstSize - 1 : file.size - 1);
+      const clampedEnd = burstSize
+        ? Math.min(rawEnd, start + burstSize - 1, file.size - 1)
+        : Math.min(rawEnd, file.size - 1);
 
       if (start > clampedEnd || start >= file.size) {
         res.status(416);

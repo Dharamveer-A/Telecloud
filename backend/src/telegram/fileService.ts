@@ -9,32 +9,63 @@ import { db, FileRecord, FileChunk } from "../db/db";
 import { getWritableModule, recordChunkStored, inputPeerFor, getInputPeerForChatId, invalidateModule, getOrCreateForumSupergroup, createFolderTopic } from "./storageManager";
 import { encryptBuffer, decryptBuffer, encryptFile, decryptStream } from "../utils/crypto";
 
-// Default chunk size for streaming and uploading: 30 MB (31,457,280 bytes).
-// Splitting files into 10MB–50MB chunks enables instant video/audio streaming,
-// fast seeking via HTTP Range requests, and strictly bounded RAM usage.
-export const DEFAULT_CHUNK_SIZE = 30 * 1024 * 1024; // 30 MB
+// Telegram maximum file size ceiling for general non-media files (ZIP, ISO, documents, installers).
+// 1.90 GB leaves a safe ~247 MB buffer below Telegram's strict 2.00 GB ceiling for metadata & encryption.
+export const MAX_TELEGRAM_CHUNK = 1900000000; // 1.90 GB
 
-export function getChunkSize(): number {
-  if (process.env.CHUNK_SIZE_BYTES) {
-    const parsed = parseInt(process.env.CHUNK_SIZE_BYTES, 10);
-    if (!isNaN(parsed) && parsed > 0) return parsed;
+// Default chunk size for video/audio streaming and uploading: 30 MB (31,457,280 bytes).
+// Splitting media files into 10MB–50MB chunks enables instant video/audio playback (<800ms),
+// fast seeking via HTTP Range requests, and strictly bounded RAM usage.
+export const VIDEO_STREAMING_CHUNK = 30 * 1024 * 1024; // 30 MB
+export const DEFAULT_CHUNK_SIZE = VIDEO_STREAMING_CHUNK;
+
+export function isMediaFile(mimeType?: string, filename?: string): boolean {
+  if (mimeType) {
+    const lower = mimeType.toLowerCase();
+    if (lower.startsWith("video/") || lower.startsWith("audio/")) return true;
   }
+  if (filename) {
+    const ext = path.extname(filename).toLowerCase().replace(/^\./, "");
+    const mediaExts = new Set([
+      "mp4", "m4v", "mkv", "webm", "mov", "avi", "wmv", "flv", "3gp", "ts",
+      "mp3", "wav", "ogg", "m4a", "flac", "aac", "opus", "wma"
+    ]);
+    if (mediaExts.has(ext)) return true;
+  }
+  return false;
+}
+
+export function getChunkSize(mimeType?: string, filename?: string): number {
+  const isMedia = isMediaFile(mimeType, filename);
+  if (isMedia) {
+    if (process.env.CHUNK_SIZE_BYTES) {
+      const parsed = parseInt(process.env.CHUNK_SIZE_BYTES, 10);
+      if (!isNaN(parsed) && parsed > 0) return parsed;
+    }
+    return VIDEO_STREAMING_CHUNK;
+  }
+
+  // Non-media files (archives, ISOs, documents): use Telegram large chunk ceiling (1.90 GB)
   if (process.env.MAX_TELEGRAM_FILE_BYTES) {
     const parsed = parseInt(process.env.MAX_TELEGRAM_FILE_BYTES, 10);
     if (!isNaN(parsed) && parsed > 0) return parsed;
   }
-  return DEFAULT_CHUNK_SIZE;
+  return MAX_TELEGRAM_CHUNK;
 }
 
 // Default max range burst for video streaming HTTP Range requests: matches chunk size (30MB)
 export const DEFAULT_RANGE_BURST = 30 * 1024 * 1024; // 30 MB
 
-export function getRangeBurstSize(): number {
+export function getRangeBurstSize(mimeType?: string, filename?: string): number | undefined {
   if (process.env.MAX_RANGE_BURST) {
     const parsed = parseInt(process.env.MAX_RANGE_BURST, 10);
     if (!isNaN(parsed) && parsed > 0) return parsed;
   }
-  return getChunkSize();
+  // Clamp only media streaming requests; non-media file downloads are not restricted to burst windows
+  if (isMediaFile(mimeType, filename)) {
+    return DEFAULT_RANGE_BURST;
+  }
+  return undefined;
 }
 
 const TMP_DIR = path.join(process.env.DATA_DIR || "./data", "tmp");
@@ -115,7 +146,7 @@ export async function uploadFile(client: TelegramClient, opts: UploadOptions): P
   }
 
   try {
-    const chunkSize = getChunkSize();
+    const chunkSize = getChunkSize(mimeType, filename);
     const partsCount = Math.max(1, Math.ceil(totalSize / chunkSize));
     const chunks: FileChunk[] = [];
     

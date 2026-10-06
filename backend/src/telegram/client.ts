@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { TelegramClient } from "telegram";
 import { StringSession } from "telegram/sessions";
 import { Api } from "telegram";
@@ -9,14 +10,16 @@ import { encryptSession, decryptSession } from "../utils/crypto";
 import { db, FileRecord, StorageModule } from "../db/db";
 import { getOrCreateForumSupergroup, inputPeerFor } from "./storageManager";
 
-const apiId = parseInt(process.env.TELEGRAM_API_ID || "0", 10);
-const apiHash = process.env.TELEGRAM_API_HASH || "";
-
-if (!apiId || !apiHash) {
-  console.warn(
-    "[telecloud] TELEGRAM_API_ID / TELEGRAM_API_HASH are not set. " +
-      "Get free ones from https://my.telegram.org before logging in."
-  );
+function getApiCredentials() {
+  const apiId = parseInt(process.env.TELEGRAM_API_ID || "0", 10);
+  const apiHash = process.env.TELEGRAM_API_HASH || "";
+  if (!apiId || !apiHash) {
+    console.warn(
+      "[telecloud] TELEGRAM_API_ID / TELEGRAM_API_HASH are not set. " +
+        "Get free ones from https://my.telegram.org before logging in."
+    );
+  }
+  return { apiId, apiHash };
 }
 
 // In-flight logins live in memory only, keyed by phone number, for the
@@ -34,6 +37,7 @@ const pendingLogins = new Map<string, PendingLogin>();
 const activeClients = new Map<string, TelegramClient>();
 
 function newClient(session = ""): TelegramClient {
+  const { apiId, apiHash } = getApiCredentials();
   return new TelegramClient(new StringSession(session), apiId, apiHash, {
     connectionRetries: 5,
   });
@@ -41,6 +45,7 @@ function newClient(session = ""): TelegramClient {
 
 // Step 1: user submits their phone number.
 export async function requestLoginCode(phone: string): Promise<void> {
+  const { apiId, apiHash } = getApiCredentials();
   const client = newClient();
   await client.connect();
   const result = await client.sendCode({ apiId, apiHash }, phone);
