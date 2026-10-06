@@ -68,6 +68,53 @@ export async function getOrCreateForumSupergroup(client: TelegramClient, userId:
   const existing = userModules.find((m) => m.id.includes("_forum_"));
   if (existing) return existing;
 
+  // Search existing Telegram dialogs for a channel titled "TeleCloud Drive" before creating a new one
+  try {
+    const dialogs = await client.getDialogs({ limit: 100 });
+    const matches = dialogs.filter((d) => {
+      const title = (d.title || d.name || "").trim().toLowerCase();
+      return title === "telecloud drive" && d.isChannel;
+    });
+
+    if (matches.length > 0) {
+      // Pick the best match: prefer one that already has forum enabled, or the first one
+      const best = matches.find((m) => (m.entity as any)?.forum) || matches[0];
+      const channel = best.entity as Api.Channel;
+      const inputChannel = new Api.InputChannel({
+        channelId: bigInt(channel.id.toString()),
+        accessHash: bigInt(channel.accessHash ? channel.accessHash.toString() : "0"),
+      });
+
+      if (!channel.forum) {
+        try {
+          await client.invoke(
+            new Api.channels.ToggleForum({
+              channel: inputChannel,
+              enabled: true,
+            })
+          );
+        } catch (e) {
+          console.warn("Notice: could not enable forum on existing channel:", e);
+        }
+      }
+
+      const mod: StorageModule = {
+        id: `u${userId}_forum_${channel.id.toString()}`,
+        chatId: channel.id.toString(),
+        accessHash: channel.accessHash ? channel.accessHash.toString() : "0",
+        fileCount: 0,
+        createdAt: Date.now(),
+      };
+
+      db.modules.create(mod);
+      console.log(`[StorageManager] Reusing existing TeleCloud Drive supergroup (${channel.id.toString()})`);
+      return mod;
+    }
+  } catch (err) {
+    console.warn("[StorageManager] Error checking dialogs for existing TeleCloud Drive:", err);
+  }
+
+  // Create new channel only if none exists
   const result = await client.invoke(
     new Api.channels.CreateChannel({
       title: "TeleCloud Drive",
@@ -105,6 +152,33 @@ export async function getOrCreateForumSupergroup(client: TelegramClient, userId:
 
   db.modules.create(mod);
   return mod;
+}
+
+export async function getOrCreateBackupTopic(
+  client: TelegramClient,
+  forumMod: StorageModule
+): Promise<number | undefined> {
+  const BACKUP_TOPIC_TITLE = "⚙️ System / Backups";
+  try {
+    const res = await client.invoke(
+      new Api.channels.GetForumTopics({
+        channel: inputChannelFor(forumMod),
+        limit: 50,
+      })
+    );
+    const existing = (res as any).topics?.find((t: any) => {
+      const title = (t.title || "").trim().toLowerCase();
+      return title.includes("backup") || title.includes("system");
+    });
+    if (existing) {
+      return existing.id;
+    }
+  } catch (err) {
+    console.warn("Notice: could not list forum topics:", err);
+  }
+
+  // Create dedicated topic for DB Backups
+  return createFolderTopic(client, forumMod, BACKUP_TOPIC_TITLE);
 }
 
 export async function createFolderTopic(

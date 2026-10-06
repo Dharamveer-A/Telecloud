@@ -4,8 +4,9 @@
  * Problem: Render's free tier has no persistent disk, so db.sqlite is wiped
  * on every restart/deploy.
  *
- * Solution: Use Telegram Saved Messages (already authenticated) to store a
- * backup of the SQLite database file every 2 minutes and on graceful shutdown.
+ * Solution: Store SQLite database backups inside the TeleCloud Drive
+ * forum supergroup itself (under a dedicated "⚙️ System / Backups" topic),
+ * keeping the user's personal "Saved Messages" completely clean and uncluttered.
  * On startup, restore the latest backup before SQLite opens.
  *
  * The database only contains metadata (~1-5 MB), so uploads are fast.
@@ -19,7 +20,7 @@ import { TelegramClient } from "telegram";
 import { CustomFile } from "telegram/client/uploads";
 import { Api } from "telegram";
 
-// Marker caption that uniquely identifies our backup messages in Saved Messages
+// Marker caption that uniquely identifies our backup messages
 const BACKUP_CAPTION = "🔒 TELECLOUD_DB_BACKUP_V1";
 
 // How many old backup messages to keep (deletes the rest to save Telegram storage)
@@ -35,30 +36,65 @@ let backupIntervalHandle: ReturnType<typeof setInterval> | null = null;
 let isBacking = false;
 
 /**
- * Restore db.sqlite from the latest Telegram Saved Messages backup.
- * Call this BEFORE opening the SQLite database.
- * Returns true if a backup was found and restored, false if starting fresh.
+ * Resolves the TeleCloud Drive forum supergroup and dedicated backup topic.
+ * Falls back to "me" (Saved Messages) only if supergroup resolution fails.
+ */
+async function getBackupTarget(client: TelegramClient): Promise<{ targetPeer: any; topicId?: number }> {
+  try {
+    const me = (await client.getMe()) as Api.User;
+    const userId = me.id.toString();
+    const { getOrCreateForumSupergroup, getOrCreateBackupTopic, inputChannelFor } = await import(
+      "../telegram/storageManager"
+    );
+    const forumMod = await getOrCreateForumSupergroup(client, userId);
+    const targetPeer = inputChannelFor(forumMod);
+    const topicId = await getOrCreateBackupTopic(client, forumMod);
+    return { targetPeer, topicId };
+  } catch (err) {
+    console.warn("[DB Backup] Notice: could not resolve TeleCloud Drive channel, falling back to Saved Messages:", err);
+    return { targetPeer: "me" };
+  }
+}
+
+/**
+ * Restore db.sqlite from the latest Telegram backup.
+ * Checks TeleCloud Drive channel first, then falls back to Saved Messages for legacy backups.
  */
 export async function restoreDbFromTelegram(client: TelegramClient): Promise<boolean> {
   if (process.env.DB_BACKUP_DISABLED === "true") return false;
 
   try {
-    console.log("[DB Backup] Searching for database backup in Telegram Saved Messages...");
+    console.log("[DB Backup] Searching for database backup in TeleCloud Drive channel...");
+    const { targetPeer } = await getBackupTarget(client);
 
-    // Search saved messages for backup files
-    const messages = await client.getMessages("me", {
-      limit: 50,
-      // We'll filter manually since Telegram search on saved messages is unreliable
-    });
+    let backupMessages: any[] = [];
+    if (targetPeer !== "me") {
+      try {
+        const channelMsgs = await client.getMessages(targetPeer, { limit: 50 });
+        backupMessages = channelMsgs.filter(
+          (msg: any) =>
+            msg.message === BACKUP_CAPTION &&
+            msg.media &&
+            ((msg.media as any).className === "MessageMediaDocument" ||
+              msg.media instanceof Api.MessageMediaDocument)
+        );
+      } catch (err) {
+        console.warn("[DB Backup] Channel message fetch warning:", err);
+      }
+    }
 
-    // Find messages with our backup caption that have a document attached
-    const backupMessages = messages.filter(
-      (msg: any) =>
-        msg.message === BACKUP_CAPTION &&
-        msg.media &&
-        ((msg.media as any).className === "MessageMediaDocument" ||
-          msg.media instanceof Api.MessageMediaDocument)
-    );
+    // Fall back to Saved Messages if not found in channel yet
+    if (backupMessages.length === 0) {
+      console.log("[DB Backup] Checking Saved Messages for backup...");
+      const savedMsgs = await client.getMessages("me", { limit: 50 });
+      backupMessages = savedMsgs.filter(
+        (msg: any) =>
+          msg.message === BACKUP_CAPTION &&
+          msg.media &&
+          ((msg.media as any).className === "MessageMediaDocument" ||
+            msg.media instanceof Api.MessageMediaDocument)
+      );
+    }
 
     if (backupMessages.length === 0) {
       console.log("[DB Backup] No backup found — starting with a fresh database.");
@@ -77,7 +113,7 @@ export async function restoreDbFromTelegram(client: TelegramClient): Promise<boo
     }
 
     // Download the backup file to the db path
-    const buffer = await client.downloadMedia(latest as any, {}) as Buffer;
+    const buffer = (await client.downloadMedia(latest as any, {})) as Buffer;
 
     if (!buffer || buffer.length === 0) {
       console.warn("[DB Backup] Downloaded backup was empty — starting fresh.");
@@ -109,8 +145,9 @@ export async function restoreDbFromTelegram(client: TelegramClient): Promise<boo
 }
 
 /**
- * Upload the current db.sqlite to Telegram Saved Messages as a backup.
- * Keeps only the last MAX_BACKUPS_TO_KEEP messages, deletes older ones.
+ * Upload the current db.sqlite to TeleCloud Drive forum supergroup.
+ * Keeps only the last MAX_BACKUPS_TO_KEEP messages in the channel,
+ * and automatically purges old backup messages from personal Saved Messages.
  */
 export async function backupDbToTelegram(client: TelegramClient): Promise<void> {
   if (process.env.DB_BACKUP_DISABLED === "true") return;
@@ -120,35 +157,67 @@ export async function backupDbToTelegram(client: TelegramClient): Promise<void> 
   isBacking = true;
   try {
     const dbBuffer = fs.readFileSync(DB_PATH);
+    const { targetPeer, topicId } = await getBackupTarget(client);
 
-    // Upload db.sqlite to Saved Messages with our marker caption
-    await client.sendFile("me", {
+    // Upload db.sqlite into TeleCloud Drive channel (or fallback)
+    const sendParams: any = {
       file: new CustomFile("db.sqlite", dbBuffer.length, "db.sqlite", dbBuffer),
       caption: BACKUP_CAPTION,
       forceDocument: true,
-    });
+    };
+    if (topicId) {
+      sendParams.replyTo = topicId;
+    }
 
-    // Clean up old backups — keep only the last MAX_BACKUPS_TO_KEEP
-    const messages = await client.getMessages("me", { limit: 100 });
-    const backupMessages = messages.filter(
-      (msg: any) =>
-        msg.message === BACKUP_CAPTION &&
-        msg.media &&
-        ((msg.media as any).className === "MessageMediaDocument" ||
-          msg.media instanceof Api.MessageMediaDocument)
-    );
+    await client.sendFile(targetPeer, sendParams);
 
-    if (backupMessages.length > MAX_BACKUPS_TO_KEEP) {
-      const toDelete = backupMessages
-        .slice(MAX_BACKUPS_TO_KEEP)
-        .map((m: any) => m.id);
+    // Clean up old backups in target channel — keep only the last MAX_BACKUPS_TO_KEEP
+    try {
+      const messages = await client.getMessages(targetPeer, { limit: 100 });
+      const backupMessages = messages.filter(
+        (msg: any) =>
+          msg.message === BACKUP_CAPTION &&
+          msg.media &&
+          ((msg.media as any).className === "MessageMediaDocument" ||
+            msg.media instanceof Api.MessageMediaDocument)
+      );
 
-      await client.deleteMessages("me", toDelete, { revoke: true });
-      console.log(`[DB Backup] Cleaned up ${toDelete.length} old backup(s).`);
+      if (backupMessages.length > MAX_BACKUPS_TO_KEEP) {
+        const toDelete = backupMessages
+          .slice(MAX_BACKUPS_TO_KEEP)
+          .map((m: any) => m.id);
+
+        await client.deleteMessages(targetPeer, toDelete, { revoke: true });
+        console.log(`[DB Backup] Cleaned up ${toDelete.length} old backup(s) in channel.`);
+      }
+    } catch (e) {
+      console.warn("Could not clean old backups in channel:", e);
+    }
+
+    // Clean up any remaining backup messages in personal Saved Messages ("me") so user's Saved Messages is spotless!
+    try {
+      const savedMessages = await client.getMessages("me", { limit: 100 });
+      const staleSaved = savedMessages.filter(
+        (msg: any) =>
+          msg.message === BACKUP_CAPTION &&
+          msg.media &&
+          ((msg.media as any).className === "MessageMediaDocument" ||
+            msg.media instanceof Api.MessageMediaDocument)
+      );
+      if (staleSaved.length > 0) {
+        await client.deleteMessages(
+          "me",
+          staleSaved.map((m: any) => m.id),
+          { revoke: true }
+        );
+        console.log(`[DB Backup] Purged ${staleSaved.length} old backup message(s) from personal Saved Messages.`);
+      }
+    } catch (e) {
+      console.warn("Notice: could not purge Saved Messages backups:", e);
     }
 
     console.log(
-      `[DB Backup] ✅ Backed up to Telegram (${(dbBuffer.length / 1024).toFixed(1)} KB).`
+      `[DB Backup] ✅ Backed up to TeleCloud channel (${(dbBuffer.length / 1024).toFixed(1)} KB).`
     );
   } catch (err: any) {
     console.warn("[DB Backup] Backup failed:", err?.message);
@@ -207,8 +276,6 @@ export function registerShutdownBackup(client: TelegramClient): void {
 }
 
 // ── Auto-Sync from Telegram ──────────────────────────────────────────
-// Periodically checks if a newer database snapshot was uploaded to Telegram
-// (e.g. from a bulk migration or upload on your laptop), and hot-reloads it!
 let lastAppliedBackupTimestamp = 0;
 let syncCheckIntervalHandle: ReturnType<typeof setInterval> | null = null;
 
@@ -217,7 +284,17 @@ export async function syncNewerDbFromTelegram(client: TelegramClient): Promise<b
   if (isBacking) return false;
 
   try {
-    const messages = await client.getMessages("me", { limit: 20 });
+    const { targetPeer } = await getBackupTarget(client);
+    let messages: any[] = [];
+    if (targetPeer !== "me") {
+      try {
+        messages = await client.getMessages(targetPeer, { limit: 20 });
+      } catch {}
+    }
+    if (messages.length === 0) {
+      messages = await client.getMessages("me", { limit: 20 });
+    }
+
     const backupMessages = messages.filter(
       (msg: any) =>
         msg.message === BACKUP_CAPTION &&
@@ -231,7 +308,6 @@ export async function syncNewerDbFromTelegram(client: TelegramClient): Promise<b
     const latest = backupMessages[0];
     const backupDate = (latest as any).date * 1000; // ms
 
-    // Only restore if this backup is genuinely newer than what we currently have
     if (lastAppliedBackupTimestamp && backupDate <= lastAppliedBackupTimestamp) {
       return false;
     }
@@ -251,7 +327,6 @@ export async function syncNewerDbFromTelegram(client: TelegramClient): Promise<b
     const buffer = (await client.downloadMedia(latest as any, {})) as Buffer;
     if (!buffer || buffer.length === 0) return false;
 
-    // Overwrite the local DB and hot-reload SQLite statements
     try {
       const { closeSqlite } = await import("../db/sqlite");
       closeSqlite();
@@ -279,7 +354,7 @@ export async function syncNewerDbFromTelegram(client: TelegramClient): Promise<b
 
 export function startPeriodicDbSyncCheck(
   client: TelegramClient,
-  intervalMs = 3 * 60 * 1000 // checks every 3 minutes
+  intervalMs = 3 * 60 * 1000
 ): void {
   if (process.env.DB_BACKUP_DISABLED === "true") return;
 
@@ -290,4 +365,3 @@ export function startPeriodicDbSyncCheck(
 
   console.log(`[DB Sync] Background auto-sync checker active (every ${intervalMs / 1000}s).`);
 }
-
