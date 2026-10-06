@@ -98,7 +98,7 @@ function FolderTreeNode({
   node,
   allFolders,
   folderChildrenMap,
-  currentPath,
+  currentPath = [],
   inTrash,
   onSelect,
   onDropToNode,
@@ -113,16 +113,17 @@ function FolderTreeNode({
   onDropToNode?: (e: React.DragEvent, node: any) => void;
   depth?: number;
 }) {
-  const children = folderChildrenMap ? (folderChildrenMap.get(node.id) || []) : allFolders.filter((f) => f.parentId === node.id);
-  const isOpen = currentPath.some((c) => c.id === node.id) || depth === 0; // auto open if in path or root
+  if (!node || depth > 20) return null;
+  const children = folderChildrenMap ? (folderChildrenMap.get(node.id) || []) : (allFolders || []).filter((f) => f && f.parentId === node.id);
+  const isOpen = (currentPath || []).some((c) => c && c.id === node.id) || depth === 0; // auto open if in path or root
   const [expanded, setExpanded] = useState(isOpen);
   const [isDragOver, setIsDragOver] = useState(false);
 
   useEffect(() => {
-    if (currentPath.some((c) => c.id === node.id)) setExpanded(true);
+    if ((currentPath || []).some((c) => c && c.id === node.id)) setExpanded(true);
   }, [currentPath, node.id]);
 
-  const isCurrentActive = !inTrash && currentPath[currentPath.length - 1]?.id === node.id;
+  const isCurrentActive = !inTrash && currentPath && currentPath[currentPath.length - 1]?.id === node.id;
 
   return (
     <div>
@@ -611,10 +612,17 @@ export default function Browser() {
   }
 
   async function init() {
-    const res: any = await api.getRoot();
-    await openFolder(res.rootFolderId, "My Files", false, []);
-    fetchTree();
-    fetchTrash();
+    try {
+      const res: any = await api.getRoot();
+      if (res && res.rootFolderId) {
+        await openFolder(res.rootFolderId, "My Files", false, []);
+      }
+      fetchTree();
+      fetchTrash();
+    } catch (e: any) {
+      console.error("Init failed:", e);
+      setError(e.message || "Failed to load files");
+    }
   }
   useEffect(() => { init(); }, []);
 
@@ -948,12 +956,14 @@ export default function Browser() {
   const sortedFolders = useMemo(() => {
     const list = [...filteredFolders];
     list.sort((a, b) => {
-      if (sortBy === "name-asc") return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
-      if (sortBy === "name-desc") return b.name.localeCompare(a.name, undefined, { numeric: true, sensitivity: "base" });
-      if (sortBy === "date-desc") return (b.createdAt || 0) - (a.createdAt || 0);
-      if (sortBy === "date-asc") return (a.createdAt || 0) - (b.createdAt || 0);
-      if (sortBy === "size-desc") return (b.itemCount || 0) - (a.itemCount || 0);
-      if (sortBy === "size-asc") return (a.itemCount || 0) - (b.itemCount || 0);
+      const aName = a?.name || "";
+      const bName = b?.name || "";
+      if (sortBy === "name-asc") return aName.localeCompare(bName, undefined, { numeric: true, sensitivity: "base" });
+      if (sortBy === "name-desc") return bName.localeCompare(aName, undefined, { numeric: true, sensitivity: "base" });
+      if (sortBy === "date-desc") return (b?.createdAt || 0) - (a?.createdAt || 0);
+      if (sortBy === "date-asc") return (a?.createdAt || 0) - (b?.createdAt || 0);
+      if (sortBy === "size-desc") return (b?.itemCount || 0) - (a?.itemCount || 0);
+      if (sortBy === "size-asc") return (a?.itemCount || 0) - (b?.itemCount || 0);
       return 0;
     });
     return list;
@@ -962,12 +972,14 @@ export default function Browser() {
   const sortedFiles = useMemo(() => {
     const list = [...filteredFiles];
     list.sort((a, b) => {
-      if (sortBy === "name-asc") return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
-      if (sortBy === "name-desc") return b.name.localeCompare(a.name, undefined, { numeric: true, sensitivity: "base" });
-      if (sortBy === "date-desc") return (b.createdAt || 0) - (a.createdAt || 0);
-      if (sortBy === "date-asc") return (a.createdAt || 0) - (b.createdAt || 0);
-      if (sortBy === "size-desc") return b.size - a.size;
-      if (sortBy === "size-asc") return a.size - b.size;
+      const aName = a?.name || "";
+      const bName = b?.name || "";
+      if (sortBy === "name-asc") return aName.localeCompare(bName, undefined, { numeric: true, sensitivity: "base" });
+      if (sortBy === "name-desc") return bName.localeCompare(aName, undefined, { numeric: true, sensitivity: "base" });
+      if (sortBy === "date-desc") return (b?.createdAt || 0) - (a?.createdAt || 0);
+      if (sortBy === "date-asc") return (a?.createdAt || 0) - (b?.createdAt || 0);
+      if (sortBy === "size-desc") return (b?.size || 0) - (a?.size || 0);
+      if (sortBy === "size-asc") return (a?.size || 0) - (b?.size || 0);
       return 0;
     });
     return list;
