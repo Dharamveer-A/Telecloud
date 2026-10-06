@@ -125,6 +125,17 @@ export async function restoreDbFromTelegram(client: TelegramClient): Promise<boo
       return false;
     }
 
+    // Remember current user session strings on this server so restoring data doesn't
+    // cause session collision (AUTH_KEY_DUPLICATED) between Local and Render.
+    const userSessions = new Map<string, string>();
+    try {
+      const { sqlite } = await import("../db/sqlite");
+      const rows = sqlite.prepare("SELECT id, sessionString FROM users").all() as any[];
+      for (const r of rows) {
+        if (r.id && r.sessionString) userSessions.set(r.id, r.sessionString);
+      }
+    } catch {}
+
     // Close existing SQLite instance and wipe stale WAL/SHM journals before overwriting db.sqlite
     try {
       const { closeSqlite } = await import("../db/sqlite");
@@ -136,8 +147,13 @@ export async function restoreDbFromTelegram(client: TelegramClient): Promise<boo
     fs.writeFileSync(DB_PATH, buffer);
 
     try {
-      const { reloadSqlite, purgeSystemBackups } = await import("../db/sqlite");
+      const { reloadSqlite, purgeSystemBackups, sqlite } = await import("../db/sqlite");
       reloadSqlite();
+      for (const [uid, sess] of userSessions.entries()) {
+        try {
+          sqlite.prepare("UPDATE users SET sessionString = ? WHERE id = ?").run(sess, uid);
+        } catch {}
+      }
       purgeSystemBackups();
     } catch {}
     console.log(
@@ -357,6 +373,17 @@ export async function syncNewerDbFromTelegram(client: TelegramClient, force = fa
     const buffer = (await client.downloadMedia(latest as any, {})) as Buffer;
     if (!buffer || buffer.length === 0) return false;
 
+    // Remember current user session strings on this server so hot-syncing data doesn't
+    // cause session collision (AUTH_KEY_DUPLICATED) between Local and Render.
+    const userSessions = new Map<string, string>();
+    try {
+      const { sqlite } = await import("../db/sqlite");
+      const rows = sqlite.prepare("SELECT id, sessionString FROM users").all() as any[];
+      for (const r of rows) {
+        if (r.id && r.sessionString) userSessions.set(r.id, r.sessionString);
+      }
+    } catch {}
+
     try {
       const { closeSqlite } = await import("../db/sqlite");
       closeSqlite();
@@ -367,8 +394,14 @@ export async function syncNewerDbFromTelegram(client: TelegramClient, force = fa
     fs.writeFileSync(DB_PATH, buffer);
 
     try {
-      const { reloadSqlite } = await import("../db/sqlite");
+      const { reloadSqlite, purgeSystemBackups, sqlite } = await import("../db/sqlite");
       reloadSqlite();
+      for (const [uid, sess] of userSessions.entries()) {
+        try {
+          sqlite.prepare("UPDATE users SET sessionString = ? WHERE id = ?").run(sess, uid);
+        } catch {}
+      }
+      purgeSystemBackups();
     } catch {}
 
     lastAppliedBackupTimestamp = backupDate;
