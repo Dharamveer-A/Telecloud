@@ -11,6 +11,12 @@ interface ThumbnailProps {
 // Module-level cache for blob object URLs so re-renders/navigation reuse cached images instantly
 const thumbBlobCache = new Map<string, string>();
 const failedThumbSet = new Set<string>();
+const retryListeners = new Set<() => void>();
+
+export function clearThumbnailFailureCache() {
+  failedThumbSet.clear();
+  retryListeners.forEach((fn) => fn());
+}
 
 export default function Thumbnail({ fileId, mimeType, password }: ThumbnailProps) {
   const isImage = mimeType.startsWith("image/");
@@ -23,6 +29,20 @@ export default function Thumbnail({ fileId, mimeType, password }: ThumbnailProps
   const [loaded, setLoaded] = useState(() => thumbBlobCache.has(fileId));
   const [error, setError] = useState(() => failedThumbSet.has(fileId));
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Subscribe to global retry events (e.g. after server reconnects or user clicks Retry)
+  useEffect(() => {
+    const onRetry = () => {
+      if (!thumbBlobCache.has(fileId)) {
+        setError(false);
+        setIsVisible(true);
+      }
+    };
+    retryListeners.add(onRetry);
+    return () => {
+      retryListeners.delete(onRetry);
+    };
+  }, [fileId]);
 
   useEffect(() => {
     // If already cached or marked as failed, no need to observe
@@ -79,7 +99,12 @@ export default function Thumbnail({ fileId, mimeType, password }: ThumbnailProps
         if (err.name === "AbortError" || controller.signal.aborted) {
           return; // Cancelled intentionally because component unmounted or was navigated away
         }
-        failedThumbSet.add(fileId);
+        const msg = String(err?.message || "");
+        // Only permanently blacklist if it's a confirmed 404 (no thumbnail exists on server).
+        // Transient network drops or 502/503 server restarts must NOT be permanently blacklisted.
+        if (msg.includes("404")) {
+          failedThumbSet.add(fileId);
+        }
         setError(true);
       });
 

@@ -36,7 +36,7 @@ import { transferStore, useTransfers } from "../lib/transfers";
 import { useSelection } from "../lib/useSelection";
 import PasswordPrompt from "../components/PasswordPrompt";
 import PreviewModal from "../components/PreviewModal";
-import Thumbnail from "../components/Thumbnail";
+import Thumbnail, { clearThumbnailFailureCache } from "../components/Thumbnail";
 import GlobalContextMenu, { ContextMenuState } from "../components/GlobalContextMenu";
 import MoveDialog from "../components/MoveDialog";
 import FilterBar from "../components/FilterBar";
@@ -620,6 +620,8 @@ export default function Browser() {
       }
       fetchTree();
       fetchTrash();
+      setError("");
+      clearThumbnailFailureCache();
     } catch (e: any) {
       console.error("Init failed:", e);
       if (retryCount < 4 && (e.message?.includes("502") || e.message?.includes("503") || e.message?.includes("Failed to fetch"))) {
@@ -1958,7 +1960,12 @@ export default function Browser() {
                     <button
                       onClick={() => {
                         setError("");
-                        init();
+                        clearThumbnailFailureCache();
+                        if (current) {
+                          refreshCurrent();
+                        } else {
+                          init();
+                        }
                       }}
                       className="px-2 py-0.5 rounded text-xs bg-teal/15 hover:bg-teal/25 text-teal border border-teal/30 font-medium transition-colors flex items-center gap-1 cursor-pointer"
                       title="Retry loading folder"

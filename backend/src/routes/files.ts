@@ -302,7 +302,7 @@ router.get("/:fileId/thumbnail", async (req: AuthedRequest, res) => {
           return null;
         };
 
-        const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 3500));
+        const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000));
         return await Promise.race([fetchWork(), timeoutPromise]);
       } catch (err) {
         return null;
@@ -321,8 +321,8 @@ router.get("/:fileId/thumbnail", async (req: AuthedRequest, res) => {
     return res.send(result);
   }
 
-  // Cache failure for 2 minutes so we don't re-query Telegram repeatedly
-  failedThumbnailCache.set(fileId, Date.now() + 120000);
+  // Short failure cache (15 seconds) so transient network delays can recover quickly
+  failedThumbnailCache.set(fileId, Date.now() + 15000);
   return res.status(404).json({ error: "Thumbnail not available" });
 });
 
