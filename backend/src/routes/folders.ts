@@ -175,6 +175,21 @@ router.post("/:folderId/sync", async (req: AuthedRequest, res) => {
 
   try {
     const client = await getClientForUser(userId);
+
+    // 1. Two-way database snapshot synchronization with Telegram:
+    // If Telegram has a newer database backup, load it.
+    // If this instance has current/newer data, ensure Telegram is updated with it.
+    try {
+      const { syncNewerDbFromTelegram, backupDbToTelegram } = await import("../services/dbBackup");
+      const updated = await syncNewerDbFromTelegram(client);
+      if (!updated) {
+        await backupDbToTelegram(client);
+      }
+    } catch (dbErr: any) {
+      console.warn("[Sync] DB snapshot synchronization notice:", dbErr?.message);
+    }
+
+    // 2. Scan and index any files uploaded directly from Telegram mobile app
     const result = await syncTopicMessages(client, userId, folderId);
     res.json({ ok: true, importedCount: result.importedCount, files: result.files });
   } catch (err: any) {

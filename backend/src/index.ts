@@ -97,7 +97,7 @@ async function main() {
           // Use first connected client for periodic DB backup
           if (!firstClient) {
             firstClient = client;
-            if (process.env.RENDER === "true" || process.env.DB_BACKUP_ENABLED === "true") {
+            if (process.env.DB_BACKUP_DISABLED !== "true") {
               startPeriodicDbBackup(client);
               registerShutdownBackup(client);
               startPeriodicDbSyncCheck(client);
