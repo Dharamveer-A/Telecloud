@@ -2,7 +2,7 @@ import { TelegramClient } from "telegram";
 import { CustomFile } from "telegram/client/uploads";
 import { v4 as uuid } from "uuid";
 import fs from "fs/promises";
-import { createReadStream, createWriteStream } from "fs";
+import fsSync, { createReadStream, createWriteStream } from "fs";
 import path from "path";
 import crypto from "crypto";
 import { db, FileRecord, FileChunk } from "../db/db";
@@ -73,7 +73,70 @@ async function ensureTmpDir() {
   await fs.mkdir(TMP_DIR, { recursive: true });
 }
 
+// ── Resumable Chunk Checkpointing ─────────────────────────────────────
+// Tracks chunks stored in Telegram for in-flight/interrupted uploads.
+// If an upload fails at chunk 15 of 20, re-uploading the file will detect
+// chunks 0-14 already in Telegram, skip re-uploading them, and upload only 15-19!
+const CHECKPOINTS_FILE = path.join(process.env.DATA_DIR || "./data", "upload_checkpoints.json");
 
+interface UploadCheckpoint {
+  updatedAt: number;
+  partsCount: number;
+  chunks: Record<number, FileChunk>;
+}
+
+let uploadCheckpoints: Record<string, UploadCheckpoint> = {};
+let checkpointsLoaded = false;
+
+function loadCheckpoints(): Record<string, UploadCheckpoint> {
+  if (checkpointsLoaded) return uploadCheckpoints;
+  try {
+    if (fsSync.existsSync(CHECKPOINTS_FILE)) {
+      uploadCheckpoints = JSON.parse(fsSync.readFileSync(CHECKPOINTS_FILE, "utf-8"));
+    }
+  } catch {
+    uploadCheckpoints = {};
+  }
+  checkpointsLoaded = true;
+  return uploadCheckpoints;
+}
+
+function saveCheckpoints() {
+  try {
+    const dir = path.dirname(CHECKPOINTS_FILE);
+    if (!fsSync.existsSync(dir)) fsSync.mkdirSync(dir, { recursive: true });
+    // Prune entries older than 48 hours to save space
+    const now = Date.now();
+    for (const k in uploadCheckpoints) {
+      if (now - uploadCheckpoints[k].updatedAt > 48 * 3600 * 1000) {
+        delete uploadCheckpoints[k];
+      }
+    }
+    fsSync.writeFileSync(CHECKPOINTS_FILE, JSON.stringify(uploadCheckpoints, null, 2));
+  } catch {}
+}
+
+export function getCheckpoint(key: string): UploadCheckpoint | undefined {
+  return loadCheckpoints()[key];
+}
+
+export function recordPartCheckpoint(key: string, partsCount: number, partIndex: number, chunk: FileChunk) {
+  const store = loadCheckpoints();
+  if (!store[key] || store[key].partsCount !== partsCount) {
+    store[key] = { updatedAt: Date.now(), partsCount, chunks: {} };
+  }
+  store[key].updatedAt = Date.now();
+  store[key].chunks[partIndex] = chunk;
+  saveCheckpoints();
+}
+
+export function clearCheckpoint(key: string) {
+  const store = loadCheckpoints();
+  if (store[key]) {
+    delete store[key];
+    saveCheckpoints();
+  }
+}
 
 export interface UploadOptions {
   userId: string;
@@ -150,9 +213,26 @@ export async function uploadFile(client: TelegramClient, opts: UploadOptions): P
     const partsCount = Math.max(1, Math.ceil(totalSize / chunkSize));
     const chunks: FileChunk[] = [];
     
+    // Key used to identify checkpointed parts across upload attempts
+    const uploadKey = `${userId}:${folderId}:${filename}:${totalSize}:${partsCount}:${!!fileKey}`;
+    const checkpoint = getCheckpoint(uploadKey);
+    const uploadWorkers = parseInt(process.env.TELEGRAM_UPLOAD_WORKERS || "8", 10);
+    
     for (let i = 0; i < partsCount; i++) {
       const offset = i * chunkSize;
       const length = Math.min(chunkSize, totalSize - offset);
+
+      // Check if this part was already uploaded in a previous attempt
+      if (checkpoint && checkpoint.chunks[i] && checkpoint.chunks[i].messageId) {
+        console.log(
+          `[Upload] Resuming: part ${i + 1}/${partsCount} already uploaded to Telegram (msgId: ${checkpoint.chunks[i].messageId}). Skipping upload.`
+        );
+        chunks.push(checkpoint.chunks[i]);
+        if (opts.progressCallback) {
+          opts.progressCallback((i + 1) / partsCount);
+        }
+        continue;
+      }
       
       await ensureTmpDir();
       const chunkPath = path.join(TMP_DIR, `${uuid()}.part`);
@@ -168,7 +248,7 @@ export async function uploadFile(client: TelegramClient, opts: UploadOptions): P
           file: customFile,
           forceDocument: true,
           caption: partCaption,
-          workers: 4,
+          workers: uploadWorkers,
           progressCallback: opts.progressCallback ? (p: number) => {
             const overall = (i + p) / partsCount;
             opts.progressCallback!(overall);
@@ -180,15 +260,28 @@ export async function uploadFile(client: TelegramClient, opts: UploadOptions): P
         }
 
         const sendWithFloodRetry = async (peer: any, params: any) => {
-          for (let attempt = 0; attempt < 3; attempt++) {
+          for (let attempt = 0; attempt < 4; attempt++) {
             try {
+              if (!client.connected) {
+                console.log(`[Upload] Reconnecting Telegram MTProto before part ${i + 1}/${partsCount}...`);
+                await client.connect();
+              }
               return await client.sendFile(peer, params);
             } catch (err: any) {
-              const waitMatch = (err?.errorMessage || err?.message || "").match(/FLOOD_WAIT_(\d+)/i);
+              const errMsg = String(err?.errorMessage || err?.message || "");
+              const waitMatch = errMsg.match(/FLOOD_WAIT_(\d+)/i);
               const waitSeconds = waitMatch ? parseInt(waitMatch[1], 10) : err?.seconds;
-              if (waitSeconds && waitSeconds <= 60 && attempt < 2) {
+              if (waitSeconds && waitSeconds <= 60 && attempt < 3) {
                 console.warn(`[Upload] Telegram FloodWait encountered: waiting ${waitSeconds}s before retrying part ${i + 1}/${partsCount}...`);
                 await new Promise((r) => setTimeout(r, (waitSeconds + 1) * 1000));
+                continue;
+              }
+              // Transient network drops / socket timeouts auto-recovery
+              const isNetworkError = /connection closed|ECONNRESET|ETIMEDOUT|EPIPE|TIMEOUT|NetworkError/i.test(errMsg);
+              if (isNetworkError && attempt < 3) {
+                console.warn(`[Upload] Network glitch on part ${i + 1}/${partsCount} (${errMsg}). Reconnecting in 2s (attempt ${attempt + 1}/3)...`);
+                try { await client.connect(); } catch {}
+                await new Promise((r) => setTimeout(r, 2000));
                 continue;
               }
               throw err;
@@ -215,13 +308,16 @@ export async function uploadFile(client: TelegramClient, opts: UploadOptions): P
         await fs.unlink(chunkPath).catch(() => {});
       }
 
-      chunks.push({
+      const chunkRecord: FileChunk = {
         chatId: targetMod.chatId,
         accessHash: targetMod.accessHash,
         messageId: (sent as any).id,
         partIndex: i,
         size: length,
-      });
+      };
+
+      chunks.push(chunkRecord);
+      recordPartCheckpoint(uploadKey, partsCount, i, chunkRecord);
       await recordChunkStored(targetMod.id);
 
       // Light pacing between multi-part uploads to avoid Telegram rate-limit bursts
@@ -243,6 +339,7 @@ export async function uploadFile(client: TelegramClient, opts: UploadOptions): P
     };
 
     db.files.create(record);
+    clearCheckpoint(uploadKey);
     return record;
   } finally {
     if (encPath) {
