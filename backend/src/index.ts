@@ -19,6 +19,27 @@ import {
   startPeriodicDbSyncCheck,
 } from "./services/dbBackup";
 
+// ── Process Resilience ──────────────────────────────────────────────
+// GramJS update loop intermittently emits idle socket timeouts when Telegram
+// resets background TCP streams. Catch these so Node.js NEVER exits or crashes.
+process.on("unhandledRejection", (reason: any) => {
+  const msg = reason?.message || String(reason);
+  if (/TIMEOUT|connection closed|ECONNRESET|ETIMEDOUT|SOCKET/i.test(msg)) {
+    console.warn("[Background] Handled transient socket timeout (process kept alive):", msg);
+    return;
+  }
+  console.error("[Process] Unhandled Rejection:", reason);
+});
+
+process.on("uncaughtException", (err: any) => {
+  const msg = err?.message || String(err);
+  if (/TIMEOUT|connection closed|ECONNRESET|ETIMEDOUT|SOCKET/i.test(msg)) {
+    console.warn("[Background] Handled transient socket exception (process kept alive):", msg);
+    return;
+  }
+  console.error("[Process] Uncaught Exception:", err);
+});
+
 async function main() {
   // ── Step 1: Restore DB from Telegram if running on Render (no persistent disk) ──
   // This MUST happen before initDb() / any sqlite access (sqlite uses lazy open).
