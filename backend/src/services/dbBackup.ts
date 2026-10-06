@@ -84,7 +84,16 @@ export async function restoreDbFromTelegram(client: TelegramClient): Promise<boo
       return false;
     }
 
+    // Close existing SQLite instance and wipe stale WAL/SHM journals before overwriting db.sqlite
+    try {
+      const { closeSqlite } = await import("../db/sqlite");
+      closeSqlite();
+    } catch {}
+    try { fs.unlinkSync(`${DB_PATH}-wal`); } catch {}
+    try { fs.unlinkSync(`${DB_PATH}-shm`); } catch {}
+
     fs.writeFileSync(DB_PATH, buffer);
+
     try {
       const { reloadSqlite } = await import("../db/sqlite");
       reloadSqlite();
@@ -243,9 +252,19 @@ export async function syncNewerDbFromTelegram(client: TelegramClient): Promise<b
     if (!buffer || buffer.length === 0) return false;
 
     // Overwrite the local DB and hot-reload SQLite statements
-    const { reloadSqlite } = await import("../db/sqlite");
+    try {
+      const { closeSqlite } = await import("../db/sqlite");
+      closeSqlite();
+    } catch {}
+    try { fs.unlinkSync(`${DB_PATH}-wal`); } catch {}
+    try { fs.unlinkSync(`${DB_PATH}-shm`); } catch {}
+
     fs.writeFileSync(DB_PATH, buffer);
-    reloadSqlite();
+
+    try {
+      const { reloadSqlite } = await import("../db/sqlite");
+      reloadSqlite();
+    } catch {}
 
     lastAppliedBackupTimestamp = backupDate;
     console.log(

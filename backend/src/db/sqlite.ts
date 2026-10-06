@@ -367,13 +367,17 @@ function createStatements(instance: InstanceType<typeof Database>) {
 
 let stmts = createStatements(sqlite);
 
-export function reloadSqlite(): void {
+export function closeSqlite(): void {
   if (_sqliteInstance) {
     try {
       _sqliteInstance.close();
     } catch {}
     _sqliteInstance = null;
   }
+}
+
+export function reloadSqlite(): void {
+  closeSqlite();
   _sqliteInstance = new Database(dbPath);
   _sqliteInstance.pragma("journal_mode = WAL");
   _sqliteInstance.pragma("synchronous = NORMAL");
