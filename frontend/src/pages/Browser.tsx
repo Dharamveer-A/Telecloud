@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Folder,
@@ -194,6 +194,7 @@ function FolderTreeNode({
 }
 
 export default function Browser() {
+  const navigate = useNavigate();
   const mainRef = useRef<HTMLElement>(null);
   const { selectedIds, setSelectedIds, marquee, registerItem, handlePointerDown, handleItemClick } = useSelection({ containerRef: mainRef });
   const [path, setPath] = useState<Crumb[]>([]);
@@ -805,7 +806,7 @@ export default function Browser() {
 
   function logout() {
     clearToken();
-    nav("/login");
+    navigate("/login");
   }
 
   // ---- Drag & drop -> Upload Wizard --------------------------------
