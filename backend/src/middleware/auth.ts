@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
+import { db } from "../db/db";
 
 export interface AuthedRequest extends Request {
   userId?: string;
@@ -19,6 +20,12 @@ export function requireAuth(req: AuthedRequest, res: Response, next: NextFunctio
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET!) as { userId: string };
     req.userId = payload.userId;
+
+    const user = db.users.get(req.userId);
+    if (!user) {
+      return res.status(401).json({ error: "Session expired or database reset. Please log in again." });
+    }
+
     next();
   } catch {
     return res.status(401).json({ error: "Invalid or expired session" });

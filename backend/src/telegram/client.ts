@@ -113,14 +113,27 @@ async function finishLogin(phone: string, client: TelegramClient): Promise<Login
       sessionString: encryptSession(sessionString),
       createdAt: Date.now(),
     });
-    // give every new user a root folder
-    db.folders.create({
-      id: `root_${userId}`,
-      parentId: null,
-      name: "My Files",
-      createdAt: Date.now(),
-      locked: false,
-    });
+
+    // Automatically check and restore database backup from Telegram
+    let restored = false;
+    try {
+      const { restoreDbFromTelegram } = await import("../services/dbBackup");
+      restored = await restoreDbFromTelegram(client);
+    } catch (err: any) {
+      console.warn("[Login] DB restore check notice:", err?.message);
+    }
+
+    // Only create empty root folder if no backup was found/restored
+    if (!restored && !db.folders.get(`root_${userId}`)) {
+      db.folders.create({
+        id: `root_${userId}`,
+        parentId: null,
+        name: "My Files",
+        createdAt: Date.now(),
+        locked: false,
+      });
+    }
+
     // Auto-provision the TeleCloud Drive forum supergroup in Telegram
     getOrCreateForumSupergroup(client, userId).catch((err) => {
       console.warn("Notice: could not auto-provision forum supergroup at login (will retry on first folder upload):", err?.message);

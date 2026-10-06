@@ -170,6 +170,60 @@ async function main() {
     }
   });
 
+  // Direct push of SQLite database snapshot (e.g. from local server to Render hosting)
+  app.post("/api/sync/push-db", express.raw({ type: "*/*", limit: "50mb" }), async (req, res) => {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : (req.query.token as string);
+    if (!token || token !== process.env.JWT_SECRET) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const buffer = req.body as Buffer;
+    if (!buffer || buffer.length === 0) {
+      return res.status(400).json({ error: "Empty database buffer" });
+    }
+
+    try {
+      const DATA_DIR = process.env.DATA_DIR || "./data";
+      const DB_PATH = path.join(DATA_DIR, "db.sqlite");
+      if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+
+      const { closeSqlite, reloadSqlite, purgeSystemBackups } = await import("./db/sqlite");
+      closeSqlite();
+      try { fs.unlinkSync(`${DB_PATH}-wal`); } catch {}
+      try { fs.unlinkSync(`${DB_PATH}-shm`); } catch {}
+
+      fs.writeFileSync(DB_PATH, buffer);
+      reloadSqlite();
+      purgeSystemBackups();
+
+      console.log(`[DB Sync] ✅ Database snapshot pushed and applied successfully (${(buffer.length / 1024).toFixed(1)} KB).`);
+      return res.json({ ok: true, appliedBytes: buffer.length });
+    } catch (err: any) {
+      console.error("[DB Sync] Push DB error:", err);
+      return res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // Export current SQLite database snapshot (protected by JWT_SECRET)
+  app.get("/api/sync/export-db", async (req, res) => {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : (req.query.token as string);
+    if (!token || token !== process.env.JWT_SECRET) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const DATA_DIR = process.env.DATA_DIR || "./data";
+    const DB_PATH = path.join(DATA_DIR, "db.sqlite");
+    if (!fs.existsSync(DB_PATH)) {
+      return res.status(404).json({ error: "db.sqlite not found" });
+    }
+
+    res.setHeader("Content-Type", "application/x-sqlite3");
+    res.setHeader("Content-Disposition", 'attachment; filename="db.sqlite"');
+    fs.createReadStream(DB_PATH).pipe(res);
+  });
+
   // Serve frontend production build if available.
   // Local dev:  backend/../frontend/dist
   // Render:     backend/dist/frontend_dist  (copied by build command in render.yaml)
