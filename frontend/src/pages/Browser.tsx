@@ -189,8 +189,8 @@ function FolderTreeNode({
 }
 
 export default function Browser() {
-  const nav = useNavigate();
-  const { selectedIds, setSelectedIds, marquee, registerItem, handlePointerDown, handleItemClick } = useSelection();
+  const mainRef = useRef<HTMLElement>(null);
+  const { selectedIds, setSelectedIds, marquee, registerItem, handlePointerDown, handleItemClick } = useSelection({ containerRef: mainRef });
   const [path, setPath] = useState<Crumb[]>([]);
   const [subfolders, setSubfolders] = useState<SubFolder[]>([]);
   const [files, setFiles] = useState<FileItem[]>([]);
@@ -1219,9 +1219,9 @@ export default function Browser() {
   ], [filteredFolders, filteredFiles]);
 
   return (
-    <div className="min-h-screen flex relative">
+    <div className="h-screen h-[100dvh] flex relative overflow-hidden">
       {/* Sidebar */}
-      <aside className="w-60 shrink-0 border-r border-line px-4 py-5 hidden sm:flex flex-col gap-1">
+      <aside className="w-60 shrink-0 border-r border-line px-4 py-5 hidden sm:flex flex-col gap-1 h-full overflow-hidden">
         <h1 className="font-display text-2xl mb-6 px-2">TeleCloud</h1>
 
         <div className="relative mb-4" ref={newMenuRef}>
@@ -1543,7 +1543,7 @@ export default function Browser() {
 
       {/* Main */}
       <div 
-        className="flex-1 flex flex-col min-w-0 relative"
+        className="flex-1 flex flex-col min-w-0 relative h-full overflow-hidden"
         onDragEnter={onDragEnter}
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
@@ -1833,7 +1833,8 @@ export default function Browser() {
         )}
 
         <main 
-          className="flex-1 px-3 sm:px-6 pt-3.5 sm:pt-5 pb-24 sm:pb-6 overflow-y-auto relative"
+          ref={mainRef}
+          className="flex-1 px-3 sm:px-6 pt-3.5 sm:pt-5 pb-24 sm:pb-6 overflow-y-auto relative select-none"
           onPointerDown={inTrash ? undefined : handlePointerDown}
           onContextMenu={inTrash ? undefined : handleMainContextMenu}
         >
@@ -2040,7 +2041,7 @@ export default function Browser() {
               width: Math.abs(marquee.x1 - marquee.x2),
               height: Math.abs(marquee.y1 - marquee.y2),
             }}
-            className="bg-teal/20 border border-teal pointer-events-none z-50"
+            className="bg-teal/15 border border-teal/70 pointer-events-none z-50 rounded-sm shadow-xs"
           />
         )}
           {sortedFolders.length === 0 && sortedFiles.length === 0 && (
