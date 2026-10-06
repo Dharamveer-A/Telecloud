@@ -270,98 +270,116 @@ function mapShare(row: any): ShareRecord {
 }
 
 // Prepared statements for high-speed queries
-const stmts = {
-  // Users
-  getUser: sqlite.prepare("SELECT * FROM users WHERE id = ?"),
-  getAllUsers: sqlite.prepare("SELECT * FROM users"),
-  saveUser: sqlite.prepare(
-    "INSERT OR REPLACE INTO users (id, phone, sessionString, createdAt) VALUES (@id, @phone, @sessionString, @createdAt)"
-  ),
+function createStatements(instance: InstanceType<typeof Database>) {
+  return {
+    // Users
+    getUser: instance.prepare("SELECT * FROM users WHERE id = ?"),
+    getAllUsers: instance.prepare("SELECT * FROM users"),
+    saveUser: instance.prepare(
+      "INSERT OR REPLACE INTO users (id, phone, sessionString, createdAt) VALUES (@id, @phone, @sessionString, @createdAt)"
+    ),
 
-  // Folders
-  getFolder: sqlite.prepare("SELECT * FROM folders WHERE id = ?"),
-  getSubfolders: sqlite.prepare(
-    "SELECT * FROM folders WHERE parentId = ? AND deletedAt IS NULL ORDER BY createdAt ASC"
-  ),
-  getAllFolders: sqlite.prepare("SELECT * FROM folders WHERE deletedAt IS NULL ORDER BY createdAt ASC"),
-  getAllFoldersRaw: sqlite.prepare("SELECT * FROM folders"),
-  createFolder: sqlite.prepare(
-    "INSERT INTO folders (id, parentId, name, createdAt, locked, passwordHash, salt, deletedAt, topicId) VALUES (@id, @parentId, @name, @createdAt, @locked, @passwordHash, @salt, @deletedAt, @topicId)"
-  ),
-  deleteFolderPermanent: sqlite.prepare("DELETE FROM folders WHERE id = ?"),
-  countSubfolders: sqlite.prepare(
-    "SELECT COUNT(*) as count FROM folders WHERE parentId = ? AND deletedAt IS NULL"
-  ),
-  getSubfoldersWithCounts: sqlite.prepare(`
-    SELECT 
-      f.id, f.parentId, f.name, f.createdAt, f.locked, f.deletedAt, f.topicId,
-      (
-        (SELECT COUNT(*) FROM files WHERE folderId = f.id AND deletedAt IS NULL) +
-        (SELECT COUNT(*) FROM folders WHERE parentId = f.id AND deletedAt IS NULL)
-      ) AS itemCount
-    FROM folders f
-    WHERE f.parentId = ? AND f.deletedAt IS NULL
-    ORDER BY f.createdAt ASC
-  `),
+    // Folders
+    getFolder: instance.prepare("SELECT * FROM folders WHERE id = ?"),
+    getSubfolders: instance.prepare(
+      "SELECT * FROM folders WHERE parentId = ? AND deletedAt IS NULL ORDER BY createdAt ASC"
+    ),
+    getAllFolders: instance.prepare("SELECT * FROM folders WHERE deletedAt IS NULL ORDER BY createdAt ASC"),
+    getAllFoldersRaw: instance.prepare("SELECT * FROM folders"),
+    createFolder: instance.prepare(
+      "INSERT INTO folders (id, parentId, name, createdAt, locked, passwordHash, salt, deletedAt, topicId) VALUES (@id, @parentId, @name, @createdAt, @locked, @passwordHash, @salt, @deletedAt, @topicId)"
+    ),
+    deleteFolderPermanent: instance.prepare("DELETE FROM folders WHERE id = ?"),
+    countSubfolders: instance.prepare(
+      "SELECT COUNT(*) as count FROM folders WHERE parentId = ? AND deletedAt IS NULL"
+    ),
+    getSubfoldersWithCounts: instance.prepare(`
+      SELECT 
+        f.id, f.parentId, f.name, f.createdAt, f.locked, f.deletedAt, f.topicId,
+        (
+          (SELECT COUNT(*) FROM files WHERE folderId = f.id AND deletedAt IS NULL) +
+          (SELECT COUNT(*) FROM folders WHERE parentId = f.id AND deletedAt IS NULL)
+        ) AS itemCount
+      FROM folders f
+      WHERE f.parentId = ? AND f.deletedAt IS NULL
+      ORDER BY f.createdAt ASC
+    `),
 
-  // Files
-  getFile: sqlite.prepare("SELECT * FROM files WHERE id = ?"),
-  getFilesInFolder: sqlite.prepare(
-    "SELECT * FROM files WHERE folderId = ? AND deletedAt IS NULL ORDER BY createdAt ASC"
-  ),
-  getFolderListingFiles: sqlite.prepare(
-    "SELECT id, name, size, mimeType, createdAt, encrypted FROM files WHERE folderId = ? AND deletedAt IS NULL ORDER BY createdAt ASC"
-  ),
-  countFilesInFolder: sqlite.prepare(
-    "SELECT COUNT(*) as count FROM files WHERE folderId = ? AND deletedAt IS NULL"
-  ),
-  getAllFilesRaw: sqlite.prepare("SELECT * FROM files"),
-  createFile: sqlite.prepare(
-    "INSERT INTO files (id, folderId, name, mimeType, size, createdAt, encrypted, iv, chunks, deletedAt, sha256) VALUES (@id, @folderId, @name, @mimeType, @size, @createdAt, @encrypted, @iv, @chunks, @deletedAt, @sha256)"
-  ),
-  deleteFilePermanent: sqlite.prepare("DELETE FROM files WHERE id = ?"),
+    // Files
+    getFile: instance.prepare("SELECT * FROM files WHERE id = ?"),
+    getFilesInFolder: instance.prepare(
+      "SELECT * FROM files WHERE folderId = ? AND deletedAt IS NULL ORDER BY createdAt ASC"
+    ),
+    getFolderListingFiles: instance.prepare(
+      "SELECT id, name, size, mimeType, createdAt, encrypted FROM files WHERE folderId = ? AND deletedAt IS NULL ORDER BY createdAt ASC"
+    ),
+    countFilesInFolder: instance.prepare(
+      "SELECT COUNT(*) as count FROM files WHERE folderId = ? AND deletedAt IS NULL"
+    ),
+    getAllFilesRaw: instance.prepare("SELECT * FROM files"),
+    createFile: instance.prepare(
+      "INSERT INTO files (id, folderId, name, mimeType, size, createdAt, encrypted, iv, chunks, deletedAt, sha256) VALUES (@id, @folderId, @name, @mimeType, @size, @createdAt, @encrypted, @iv, @chunks, @deletedAt, @sha256)"
+    ),
+    deleteFilePermanent: instance.prepare("DELETE FROM files WHERE id = ?"),
 
-  // Modules
-  getModule: sqlite.prepare("SELECT * FROM modules WHERE id = ?"),
-  getModuleByChatId: sqlite.prepare("SELECT * FROM modules WHERE chatId = ?"),
-  getUserModules: sqlite.prepare("SELECT * FROM modules WHERE id LIKE ? ORDER BY createdAt ASC"),
-  getAllModules: sqlite.prepare("SELECT * FROM modules"),
-  createModule: sqlite.prepare(
-    "INSERT INTO modules (id, chatId, accessHash, fileCount, createdAt) VALUES (@id, @chatId, @accessHash, @fileCount, @createdAt)"
-  ),
-  updateModuleCount: sqlite.prepare("UPDATE modules SET fileCount = fileCount + 1 WHERE id = ?"),
-  setModuleCount: sqlite.prepare("UPDATE modules SET fileCount = ? WHERE id = ?"),
-  setModuleAccessHash: sqlite.prepare("UPDATE modules SET accessHash = ? WHERE id = ?"),
+    // Modules
+    getModule: instance.prepare("SELECT * FROM modules WHERE id = ?"),
+    getModuleByChatId: instance.prepare("SELECT * FROM modules WHERE chatId = ?"),
+    getUserModules: instance.prepare("SELECT * FROM modules WHERE id LIKE ? ORDER BY createdAt ASC"),
+    getAllModules: instance.prepare("SELECT * FROM modules"),
+    createModule: instance.prepare(
+      "INSERT INTO modules (id, chatId, accessHash, fileCount, createdAt) VALUES (@id, @chatId, @accessHash, @fileCount, @createdAt)"
+    ),
+    updateModuleCount: instance.prepare("UPDATE modules SET fileCount = fileCount + 1 WHERE id = ?"),
+    setModuleCount: instance.prepare("UPDATE modules SET fileCount = ? WHERE id = ?"),
+    setModuleAccessHash: instance.prepare("UPDATE modules SET accessHash = ? WHERE id = ?"),
 
-  // Shares
-  getAllShares: sqlite.prepare("SELECT * FROM shares"),
-  getShareByToken: sqlite.prepare("SELECT * FROM shares WHERE token = ?"),
-  getShareById: sqlite.prepare("SELECT * FROM shares WHERE id = ?"),
-  getSharesByUser: sqlite.prepare("SELECT * FROM shares WHERE userId = ? ORDER BY createdAt DESC"),
-  getShareByTarget: sqlite.prepare("SELECT * FROM shares WHERE targetId = ? AND userId = ?"),
-  createShare: sqlite.prepare(
-    "INSERT INTO shares (id, token, userId, targetType, targetId, passwordHash, salt, expiresAt, createdAt, downloadsCount, folderKey, shareMode) VALUES (@id, @token, @userId, @targetType, @targetId, @passwordHash, @salt, @expiresAt, @createdAt, @downloadsCount, @folderKey, @shareMode)"
-  ),
-  deleteShare: sqlite.prepare("DELETE FROM shares WHERE id = ? AND userId = ?"),
-  deleteSharesByTarget: sqlite.prepare("DELETE FROM shares WHERE targetId = ?"),
-  incrementShareDownloads: sqlite.prepare("UPDATE shares SET downloadsCount = downloadsCount + 1 WHERE id = ?"),
+    // Shares
+    getAllShares: instance.prepare("SELECT * FROM shares"),
+    getShareByToken: instance.prepare("SELECT * FROM shares WHERE token = ?"),
+    getShareById: instance.prepare("SELECT * FROM shares WHERE id = ?"),
+    getSharesByUser: instance.prepare("SELECT * FROM shares WHERE userId = ? ORDER BY createdAt DESC"),
+    getShareByTarget: instance.prepare("SELECT * FROM shares WHERE targetId = ? AND userId = ?"),
+    createShare: instance.prepare(
+      "INSERT INTO shares (id, token, userId, targetType, targetId, passwordHash, salt, expiresAt, createdAt, downloadsCount, folderKey, shareMode) VALUES (@id, @token, @userId, @targetType, @targetId, @passwordHash, @salt, @expiresAt, @createdAt, @downloadsCount, @folderKey, @shareMode)"
+    ),
+    deleteShare: instance.prepare("DELETE FROM shares WHERE id = ? AND userId = ?"),
+    deleteSharesByTarget: instance.prepare("DELETE FROM shares WHERE targetId = ?"),
+    incrementShareDownloads: instance.prepare("UPDATE shares SET downloadsCount = downloadsCount + 1 WHERE id = ?"),
 
-  // Trash
-  getDeletedFiles: sqlite.prepare(
-    "SELECT f.*, p.name as originalFolderName FROM files f LEFT JOIN folders p ON f.folderId = p.id WHERE f.deletedAt IS NOT NULL ORDER BY f.deletedAt DESC"
-  ),
-  getDeletedFolders: sqlite.prepare(
-    "SELECT f.*, p.name as originalFolderName FROM folders f LEFT JOIN folders p ON f.parentId = p.id WHERE f.deletedAt IS NOT NULL ORDER BY f.deletedAt DESC"
-  ),
+    // Trash
+    getDeletedFiles: instance.prepare(
+      "SELECT f.*, p.name as originalFolderName FROM files f LEFT JOIN folders p ON f.folderId = p.id WHERE f.deletedAt IS NOT NULL ORDER BY f.deletedAt DESC"
+    ),
+    getDeletedFolders: instance.prepare(
+      "SELECT f.*, p.name as originalFolderName FROM folders f LEFT JOIN folders p ON f.parentId = p.id WHERE f.deletedAt IS NOT NULL ORDER BY f.deletedAt DESC"
+    ),
 
-  // Search
-  searchFiles: sqlite.prepare(
-    "SELECT id, folderId, name, mimeType, size, createdAt, encrypted FROM files WHERE deletedAt IS NULL AND name LIKE ? ESCAPE '\\' ORDER BY createdAt DESC LIMIT 200"
-  ),
-  searchFolders: sqlite.prepare(
-    "SELECT id, parentId, name, createdAt, locked FROM folders WHERE deletedAt IS NULL AND name LIKE ? ESCAPE '\\' ORDER BY createdAt DESC LIMIT 100"
-  ),
-};
+    // Search
+    searchFiles: instance.prepare(
+      "SELECT id, folderId, name, mimeType, size, createdAt, encrypted FROM files WHERE deletedAt IS NULL AND name LIKE ? ESCAPE '\\' ORDER BY createdAt DESC LIMIT 200"
+    ),
+    searchFolders: instance.prepare(
+      "SELECT id, parentId, name, createdAt, locked FROM folders WHERE deletedAt IS NULL AND name LIKE ? ESCAPE '\\' ORDER BY createdAt DESC LIMIT 100"
+    ),
+  };
+}
+
+let stmts = createStatements(sqlite);
+
+export function reloadSqlite(): void {
+  if (_sqliteInstance) {
+    try {
+      _sqliteInstance.close();
+    } catch {}
+    _sqliteInstance = null;
+  }
+  _sqliteInstance = new Database(dbPath);
+  _sqliteInstance.pragma("journal_mode = WAL");
+  _sqliteInstance.pragma("synchronous = NORMAL");
+  _sqliteInstance.pragma("foreign_keys = OFF");
+  stmts = createStatements(_sqliteInstance);
+}
 
 export const sqliteDb = {
   // Users

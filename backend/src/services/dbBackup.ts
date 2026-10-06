@@ -192,3 +192,79 @@ export function registerShutdownBackup(client: TelegramClient): void {
   process.once("SIGTERM", () => shutdown("SIGTERM"));
   process.once("SIGINT", () => shutdown("SIGINT"));
 }
+
+// ── Auto-Sync from Telegram ──────────────────────────────────────────
+// Periodically checks if a newer database snapshot was uploaded to Telegram
+// (e.g. from a bulk migration or upload on your laptop), and hot-reloads it!
+let lastAppliedBackupTimestamp = 0;
+let syncCheckIntervalHandle: ReturnType<typeof setInterval> | null = null;
+
+export async function syncNewerDbFromTelegram(client: TelegramClient): Promise<boolean> {
+  if (process.env.DB_BACKUP_DISABLED === "true") return false;
+  if (isBacking) return false;
+
+  try {
+    const messages = await client.getMessages("me", { limit: 20 });
+    const backupMessages = messages.filter(
+      (msg: any) =>
+        msg.message === BACKUP_CAPTION &&
+        msg.media &&
+        ((msg.media as any).className === "MessageMediaDocument" ||
+          msg.media instanceof Api.MessageMediaDocument)
+    );
+
+    if (backupMessages.length === 0) return false;
+
+    const latest = backupMessages[0];
+    const backupDate = (latest as any).date * 1000; // ms
+
+    // Only restore if this backup is genuinely newer than what we currently have
+    if (lastAppliedBackupTimestamp && backupDate <= lastAppliedBackupTimestamp) {
+      return false;
+    }
+
+    if (fs.existsSync(DB_PATH)) {
+      const stat = fs.statSync(DB_PATH);
+      if (backupDate <= stat.mtimeMs) {
+        lastAppliedBackupTimestamp = backupDate;
+        return false;
+      }
+    }
+
+    console.log(
+      `[DB Sync] Newer database snapshot detected in Telegram (${new Date(backupDate).toISOString()}). Hot-syncing...`
+    );
+
+    const buffer = (await client.downloadMedia(latest as any, {})) as Buffer;
+    if (!buffer || buffer.length === 0) return false;
+
+    // Overwrite the local DB and hot-reload SQLite statements
+    const { reloadSqlite } = await import("../db/sqlite");
+    fs.writeFileSync(DB_PATH, buffer);
+    reloadSqlite();
+
+    lastAppliedBackupTimestamp = backupDate;
+    console.log(
+      `[DB Sync] ✅ Hot-reloaded newer database snapshot (${(buffer.length / 1024).toFixed(1)} KB) without server restart!`
+    );
+    return true;
+  } catch (err: any) {
+    console.warn("[DB Sync] Sync check warning:", err?.message);
+    return false;
+  }
+}
+
+export function startPeriodicDbSyncCheck(
+  client: TelegramClient,
+  intervalMs = 3 * 60 * 1000 // checks every 3 minutes
+): void {
+  if (process.env.DB_BACKUP_DISABLED === "true") return;
+
+  if (syncCheckIntervalHandle) clearInterval(syncCheckIntervalHandle);
+  syncCheckIntervalHandle = setInterval(() => {
+    syncNewerDbFromTelegram(client).catch(() => {});
+  }, intervalMs);
+
+  console.log(`[DB Sync] Background auto-sync checker active (every ${intervalMs / 1000}s).`);
+}
+

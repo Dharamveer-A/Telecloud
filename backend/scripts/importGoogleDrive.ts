@@ -12,6 +12,7 @@ import { exec } from "child_process";
 import { db, FolderRecord } from "../src/db/db";
 import { getClientForUser } from "../src/telegram/client";
 import { uploadFile } from "../src/telegram/fileService";
+import { backupDbToTelegram } from "../src/services/dbBackup";
 
 const CREDENTIALS_PATH = path.join(__dirname, "../gdrive_credentials.json");
 const TOKEN_PATH = path.join(__dirname, "../gdrive_token.json");
@@ -476,6 +477,14 @@ async function main() {
       await saveMigrationState(migratedState);
       successCount++;
       console.log(`   ✅ "${finalName}" successfully stored in TeleCloud!`);
+
+      // Auto-sync database snapshot to Telegram every 25 files during large migrations
+      if (successCount > 0 && successCount % 25 === 0) {
+        console.log("   🔄 Auto-syncing database snapshot to Telegram (batch update)...");
+        await backupDbToTelegram(client).catch((err) =>
+          console.warn("   ⚠️ Snapshot sync warning:", err?.message)
+        );
+      }
     } catch (err: any) {
       failCount++;
       console.error(`   ❌ Failed to transfer "${finalName}":`, err?.message || err);
@@ -492,6 +501,14 @@ async function main() {
   console.log(`   Successfully transferred: ${successCount}`);
   console.log(`   Failed:                   ${failCount}`);
   console.log("=================================================\n");
+
+  if (successCount > 0) {
+    console.log("🔄 Auto-syncing final database snapshot to Telegram Saved Messages...");
+    await backupDbToTelegram(client).catch((err) =>
+      console.warn("⚠️ Snapshot sync warning:", err?.message)
+    );
+    console.log("✅ Complete! Cloud instance will automatically reflect all files.\n");
+  }
 }
 
 main().catch((err) => {

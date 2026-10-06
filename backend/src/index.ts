@@ -16,6 +16,7 @@ import {
   restoreDbFromTelegram,
   startPeriodicDbBackup,
   registerShutdownBackup,
+  startPeriodicDbSyncCheck,
 } from "./services/dbBackup";
 
 async function main() {
@@ -90,6 +91,7 @@ async function main() {
             if (process.env.RENDER === "true" || process.env.DB_BACKUP_ENABLED === "true") {
               startPeriodicDbBackup(client);
               registerShutdownBackup(client);
+              startPeriodicDbSyncCheck(client);
             }
           }
         })
