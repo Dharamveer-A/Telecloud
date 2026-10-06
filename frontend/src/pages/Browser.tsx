@@ -606,7 +606,16 @@ export default function Browser() {
       }
     } catch (err: any) {
       console.error("Telegram sync failed:", err);
-      alert(err?.message || "Failed to sync folder with Telegram");
+      const msg = err?.message || "";
+      if (/AUTH_KEY_DUPLICATED/i.test(msg) || /session is active/i.test(msg) || /another instance/i.test(msg)) {
+        alert(
+          "⚠️ Telegram Session Conflict (AUTH_KEY_DUPLICATED)\n\n" +
+          "Your Telegram account is currently connected to another active TeleCloud server (e.g. your Local computer dev server vs Render hosting).\n\n" +
+          "Telegram only allows one active server connection at a time per account. To sync without conflicts, stop your local server (press Ctrl+C in your local terminal) and try again."
+        );
+      } else {
+        alert(msg || "Failed to sync folder with Telegram");
+      }
     } finally {
       setSyncing(false);
     }

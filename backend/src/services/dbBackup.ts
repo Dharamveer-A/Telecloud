@@ -65,19 +65,17 @@ export async function restoreDbFromTelegram(client: TelegramClient): Promise<boo
 
   try {
     console.log("[DB Backup] Searching for database backup in TeleCloud Drive channel...");
-    const { targetPeer } = await getBackupTarget(client);
+    const { targetPeer, topicId } = await getBackupTarget(client);
 
     let backupMessages: any[] = [];
     if (targetPeer !== "me") {
       try {
+        if (topicId) {
+          const topicMsgs = await client.getMessages(targetPeer, { replyTo: topicId, limit: 50 });
+          backupMessages.push(...topicMsgs);
+        }
         const channelMsgs = await client.getMessages(targetPeer, { limit: 50 });
-        backupMessages = channelMsgs.filter(
-          (msg: any) =>
-            msg.message === BACKUP_CAPTION &&
-            msg.media &&
-            ((msg.media as any).className === "MessageMediaDocument" ||
-              msg.media instanceof Api.MessageMediaDocument)
-        );
+        backupMessages.push(...channelMsgs);
       } catch (err) {
         console.warn("[DB Backup] Channel message fetch warning:", err);
       }
@@ -86,23 +84,30 @@ export async function restoreDbFromTelegram(client: TelegramClient): Promise<boo
     // Fall back to Saved Messages if not found in channel yet
     if (backupMessages.length === 0) {
       console.log("[DB Backup] Checking Saved Messages for backup...");
-      const savedMsgs = await client.getMessages("me", { limit: 50 });
-      backupMessages = savedMsgs.filter(
-        (msg: any) =>
-          msg.message === BACKUP_CAPTION &&
-          msg.media &&
-          ((msg.media as any).className === "MessageMediaDocument" ||
-            msg.media instanceof Api.MessageMediaDocument)
-      );
+      try {
+        const savedMsgs = await client.getMessages("me", { limit: 50 });
+        backupMessages.push(...savedMsgs);
+      } catch (err) {
+        console.warn("[DB Backup] Saved Messages fetch warning:", err);
+      }
     }
 
-    if (backupMessages.length === 0) {
+    const filtered = backupMessages.filter(
+      (msg: any) =>
+        msg.message === BACKUP_CAPTION &&
+        msg.media &&
+        ((msg.media as any).className === "MessageMediaDocument" ||
+          msg.media instanceof Api.MessageMediaDocument)
+    );
+
+    if (filtered.length === 0) {
       console.log("[DB Backup] No backup found — starting with a fresh database.");
       return false;
     }
 
-    // Most recent is first (Telegram returns newest first)
-    const latest = backupMessages[0];
+    // Sort newest first (Telegram returns newest first, but ensure strict timestamp order)
+    filtered.sort((a, b) => (b.date || 0) - (a.date || 0));
+    const latest = filtered[0];
     console.log(
       `[DB Backup] Found backup from ${new Date((latest as any).date * 1000).toISOString()}. Restoring...`
     );
@@ -179,7 +184,9 @@ export async function backupDbToTelegram(client: TelegramClient): Promise<void> 
 
     // Clean up old backups in target channel — keep only the last MAX_BACKUPS_TO_KEEP
     try {
-      const messages = await client.getMessages(targetPeer, { limit: 100 });
+      const getParams: any = { limit: 100 };
+      if (topicId) getParams.replyTo = topicId;
+      const messages = await client.getMessages(targetPeer, getParams);
       const backupMessages = messages.filter(
         (msg: any) =>
           msg.message === BACKUP_CAPTION &&
@@ -285,20 +292,27 @@ export function registerShutdownBackup(client: TelegramClient): void {
 let lastAppliedBackupTimestamp = 0;
 let syncCheckIntervalHandle: ReturnType<typeof setInterval> | null = null;
 
-export async function syncNewerDbFromTelegram(client: TelegramClient): Promise<boolean> {
+export async function syncNewerDbFromTelegram(client: TelegramClient, force = false): Promise<boolean> {
   if (process.env.DB_BACKUP_DISABLED === "true") return false;
   if (isBacking) return false;
 
   try {
-    const { targetPeer } = await getBackupTarget(client);
+    const { targetPeer, topicId } = await getBackupTarget(client);
     let messages: any[] = [];
     if (targetPeer !== "me") {
       try {
-        messages = await client.getMessages(targetPeer, { limit: 20 });
+        if (topicId) {
+          const topicMsgs = await client.getMessages(targetPeer, { replyTo: topicId, limit: 30 });
+          messages.push(...topicMsgs);
+        }
+        const channelMsgs = await client.getMessages(targetPeer, { limit: 30 });
+        messages.push(...channelMsgs);
       } catch {}
     }
     if (messages.length === 0) {
-      messages = await client.getMessages("me", { limit: 20 });
+      try {
+        messages = await client.getMessages("me", { limit: 30 });
+      } catch {}
     }
 
     const backupMessages = messages.filter(
@@ -311,19 +325,29 @@ export async function syncNewerDbFromTelegram(client: TelegramClient): Promise<b
 
     if (backupMessages.length === 0) return false;
 
+    // Sort newest first
+    backupMessages.sort((a, b) => (b.date || 0) - (a.date || 0));
     const latest = backupMessages[0];
     const backupDate = (latest as any).date * 1000; // ms
 
-    if (lastAppliedBackupTimestamp && backupDate <= lastAppliedBackupTimestamp) {
+    if (!force && lastAppliedBackupTimestamp && backupDate <= lastAppliedBackupTimestamp) {
       return false;
     }
 
-    if (fs.existsSync(DB_PATH)) {
-      const stat = fs.statSync(DB_PATH);
-      if (backupDate <= stat.mtimeMs) {
-        lastAppliedBackupTimestamp = backupDate;
-        return false;
-      }
+    // Inspect current DB: check latest modification in SQLite
+    let maxRecordTime = 0;
+    try {
+      const { sqlite } = await import("../db/sqlite");
+      const fRow = sqlite.prepare("SELECT MAX(createdAt) as m FROM files WHERE deletedAt IS NULL").get() as any;
+      if (fRow?.m) maxRecordTime = Math.max(maxRecordTime, Number(fRow.m));
+      const dirRow = sqlite.prepare("SELECT MAX(createdAt) as m FROM folders WHERE deletedAt IS NULL").get() as any;
+      if (dirRow?.m) maxRecordTime = Math.max(maxRecordTime, Number(dirRow.m));
+    } catch {}
+
+    // Only skip if local DB clearly has newer record modifications AND sync is not forced
+    if (!force && maxRecordTime && backupDate <= maxRecordTime) {
+      lastAppliedBackupTimestamp = backupDate;
+      return false;
     }
 
     console.log(

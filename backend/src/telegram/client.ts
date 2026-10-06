@@ -271,7 +271,16 @@ export async function syncTopicMessages(
     getParams.replyTo = folder.topicId;
   }
 
-  const messages = await client.getMessages(peer, getParams);
+  let messages: any[] = [];
+  try {
+    messages = await client.getMessages(peer, getParams);
+  } catch (err: any) {
+    if (/AUTH_KEY_DUPLICATED/i.test(err?.message || err?.errorMessage || "")) {
+      evictClientForUser(userId);
+      throw new Error("Telegram session is active on another instance (e.g. Local vs Render). Please stop other running instances and try again.");
+    }
+    throw err;
+  }
   const imported: FileRecord[] = [];
 
   for (const msg of messages) {
@@ -354,7 +363,10 @@ export async function getClientForUser(userId: string): Promise<TelegramClient> 
   try {
     await client.connect();
   } catch (err: any) {
-    if (/SESSION_REVOKED/i.test(err?.message || err?.errorMessage || "")) {
+    if (
+      /SESSION_REVOKED/i.test(err?.message || err?.errorMessage || "") ||
+      /AUTH_KEY_DUPLICATED/i.test(err?.message || err?.errorMessage || "")
+    ) {
       evictClientForUser(userId);
     }
     throw err;

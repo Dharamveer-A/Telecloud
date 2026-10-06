@@ -181,7 +181,7 @@ router.post("/:folderId/sync", async (req: AuthedRequest, res) => {
     // If this instance has current/newer data, ensure Telegram is updated with it.
     try {
       const { syncNewerDbFromTelegram, backupDbToTelegram } = await import("../services/dbBackup");
-      const updated = await syncNewerDbFromTelegram(client);
+      const updated = await syncNewerDbFromTelegram(client, true);
       if (!updated) {
         await backupDbToTelegram(client);
       }
@@ -194,6 +194,11 @@ router.post("/:folderId/sync", async (req: AuthedRequest, res) => {
     res.json({ ok: true, importedCount: result.importedCount, files: result.files });
   } catch (err: any) {
     console.error(`[Sync] Failed to sync folder ${folderId}:`, err);
+    if (/AUTH_KEY_DUPLICATED/i.test(err?.message || "") || err?.code === 406) {
+      return res.status(409).json({
+        error: "Telegram session is active on another instance (e.g. Local computer vs Render hosting). Please stop other running instances or wait a moment and try again."
+      });
+    }
     res.status(500).json({ error: err.message || "Failed to sync folder with Telegram" });
   }
 });

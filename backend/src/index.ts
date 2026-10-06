@@ -14,6 +14,7 @@ import tunnelRoutes from "./routes/tunnel";
 import { tunnelManager } from "./tunnel";
 import {
   restoreDbFromTelegram,
+  backupDbToTelegram,
   startPeriodicDbBackup,
   registerShutdownBackup,
   startPeriodicDbSyncCheck,
@@ -129,7 +130,27 @@ async function main() {
 
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
-  // Force-trigger a restore from Telegram Saved Messages at any time
+  // Force-trigger an immediate database backup to Telegram
+  app.all("/api/sync/backup", async (_req, res) => {
+    try {
+      const allUsers = db.users.all();
+      if (allUsers.length > 0) {
+        const client = await getClientForUser(allUsers[0].id);
+        await backupDbToTelegram(client);
+        return res.json({ ok: true, backedUp: true });
+      }
+      return res.status(400).json({ error: "No user found to connect" });
+    } catch (err: any) {
+      if (/AUTH_KEY_DUPLICATED/i.test(err?.message || "")) {
+        return res.status(409).json({
+          error: "Telegram session is active in another server/tab (Local vs Render). Please stop other instances and try again."
+        });
+      }
+      return res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // Force-trigger a restore from Telegram channel at any time
   app.all("/api/sync/restore", async (_req, res) => {
     try {
       const allUsers = db.users.all();
@@ -140,6 +161,11 @@ async function main() {
       }
       return res.status(400).json({ error: "No user found to connect" });
     } catch (err: any) {
+      if (/AUTH_KEY_DUPLICATED/i.test(err?.message || "")) {
+        return res.status(409).json({
+          error: "Telegram session is active in another server/tab (Local vs Render). Please stop other instances and try again."
+        });
+      }
       return res.status(500).json({ error: err?.message });
     }
   });
