@@ -24,9 +24,12 @@ export function useSelection(options?: UseSelectionOptions | ContainerRef) {
 
   const itemsRef = useRef<Map<string, HTMLElement>>(new Map());
   const initialSelection = useRef<Set<string>>(new Set());
-  const startPoint = useRef<{ x: number; y: number } | null>(null);
-  const startScroll = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  // Starting anchor point in content (absolute) coordinates
+  const startContentPoint = useRef<{ x: number; y: number } | null>(null);
+  // Pointer on screen (for auto-scroll calculation)
   const currentPointer = useRef<{ clientX: number; clientY: number } | null>(null);
+
   const animFrameId = useRef<number | null>(null);
   const activeContainer = useRef<HTMLElement | null>(null);
 
@@ -35,6 +38,7 @@ export function useSelection(options?: UseSelectionOptions | ContainerRef) {
     else itemsRef.current.delete(id);
   }
 
+  // Combined scroll position of container and window
   const getScroll = useCallback((container: HTMLElement | null) => {
     const scrollTop = (container ? container.scrollTop : 0) + (window.scrollY || window.pageYOffset || 0);
     const scrollLeft = (container ? container.scrollLeft : 0) + (window.scrollX || window.pageXOffset || 0);
@@ -42,63 +46,75 @@ export function useSelection(options?: UseSelectionOptions | ContainerRef) {
   }, []);
 
   const updateSelectionAndMarquee = useCallback((clientX: number, clientY: number) => {
-    if (!startPoint.current) return;
+    if (!startContentPoint.current) return;
     const container = activeContainer.current;
     const currentScroll = getScroll(container);
 
-    const deltaX = currentScroll.x - startScroll.current.x;
-    const deltaY = currentScroll.y - startScroll.current.y;
+    // Current pointer position in absolute content coordinates
+    const currentContentX = clientX + currentScroll.x;
+    const currentContentY = clientY + currentScroll.y;
 
-    // Viewport position of the start point, shifted by scroll delta so it stays anchored to content
-    const originX = startPoint.current.x - deltaX;
-    const originY = startPoint.current.y - deltaY;
-
-    // The full content selection bounding box in viewport coordinates
-    const selRect = {
-      left: Math.min(originX, clientX),
-      right: Math.max(originX, clientX),
-      top: Math.min(originY, clientY),
-      bottom: Math.max(originY, clientY),
+    // Selection box in content (absolute) coordinates - IMMUNE TO SCROLLING
+    const box = {
+      left: Math.min(startContentPoint.current.x, currentContentX),
+      right: Math.max(startContentPoint.current.x, currentContentX),
+      top: Math.min(startContentPoint.current.y, currentContentY),
+      bottom: Math.max(startContentPoint.current.y, currentContentY),
     };
 
-    // Visual marquee box: clamp to container boundaries so it doesn't bleed over headers/sidebars
-    let visualLeft = selRect.left;
-    let visualRight = selRect.right;
-    let visualTop = selRect.top;
-    let visualBottom = selRect.bottom;
+    // Screen coordinates for fixed visual overlay
+    const screenLeft = box.left - currentScroll.x;
+    const screenTop = box.top - currentScroll.y;
+    const screenWidth = box.right - box.left;
+    const screenHeight = box.bottom - box.top;
 
-    if (container) {
-      const cRect = container.getBoundingClientRect();
-      visualLeft = Math.max(cRect.left, selRect.left);
-      visualRight = Math.min(cRect.right, selRect.right);
-      visualTop = Math.max(cRect.top, selRect.top);
-      visualBottom = Math.min(cRect.bottom, selRect.bottom);
-    }
+    // Visible container bounds on the screen
+    const cRect = container ? container.getBoundingClientRect() : {
+      top: 0,
+      bottom: window.innerHeight,
+      left: 0,
+      right: window.innerWidth,
+    };
 
-    const dist = Math.hypot(clientX - startPoint.current.x, clientY - startPoint.current.y);
-    if (dist > 3 || Math.abs(deltaY) > 3 || Math.abs(deltaX) > 3) {
-      const width = Math.max(0, visualRight - visualLeft);
-      const height = Math.max(0, visualBottom - visualTop);
+    // Clamp the visual overlay inside the visible container boundaries
+    const visualLeft = Math.max(cRect.left, screenLeft);
+    const visualTop = Math.max(cRect.top, screenTop);
+    const visualRight = Math.min(cRect.right, screenLeft + screenWidth);
+    const visualBottom = Math.min(cRect.bottom, screenTop + screenHeight);
+
+    const visualW = Math.max(0, visualRight - visualLeft);
+    const visualH = Math.max(0, visualBottom - visualTop);
+
+    // Only render visual box when dragged at least 3px
+    if (screenWidth > 3 || screenHeight > 3) {
       setMarquee({
         x1: visualLeft,
         y1: visualTop,
         x2: visualRight,
         y2: visualBottom,
-        width,
-        height,
+        width: visualW,
+        height: visualH,
       });
     }
 
-    // Intersect test: use selRect (unclamped) so items scrolled past viewport remain selected
+    // Intersect test: compare item's absolute content rect against selection box.
+    // An item's content coordinate is (r.top + currentScroll.y).
+    // This value is 100% constant regardless of how much the list scrolls!
     const nextSelected = new Set(initialSelection.current);
     for (const [id, el] of itemsRef.current.entries()) {
       const r = el.getBoundingClientRect();
+      const itemTop = r.top + currentScroll.y;
+      const itemBottom = r.bottom + currentScroll.y;
+      const itemLeft = r.left + currentScroll.x;
+      const itemRight = r.right + currentScroll.x;
+
       const intersect = !(
-        r.left > selRect.right ||
-        r.right < selRect.left ||
-        r.top > selRect.bottom ||
-        r.bottom < selRect.top
+        itemLeft > box.right ||
+        itemRight < box.left ||
+        itemTop > box.bottom ||
+        itemBottom < box.top
       );
+
       if (intersect) {
         nextSelected.add(id);
       }
@@ -106,9 +122,9 @@ export function useSelection(options?: UseSelectionOptions | ContainerRef) {
     setSelectedIds(nextSelected);
   }, [getScroll]);
 
-  // Smooth auto-scroll when dragging near container or viewport edges
+  // Smooth auto-scroll loop when pointer is near visible container / viewport edges
   const autoScrollStep = useCallback(() => {
-    if (!startPoint.current || !currentPointer.current) {
+    if (!startContentPoint.current || !currentPointer.current) {
       animFrameId.current = null;
       return;
     }
@@ -116,47 +132,58 @@ export function useSelection(options?: UseSelectionOptions | ContainerRef) {
     const container = activeContainer.current;
     const { clientX, clientY } = currentPointer.current;
 
-    const rect = container
-      ? container.getBoundingClientRect()
-      : {
-          top: 0,
-          bottom: window.innerHeight,
-          left: 0,
-          right: window.innerWidth,
-        };
+    const cRect = container ? container.getBoundingClientRect() : {
+      top: 0,
+      bottom: window.innerHeight,
+      left: 0,
+      right: window.innerWidth,
+    };
 
-    const EDGE_THRESHOLD = 50;
-    const MAX_SPEED = 20;
+    // Detect visible edges within the browser window
+    const visibleTop = Math.max(0, cRect.top);
+    const visibleBottom = Math.min(window.innerHeight, cRect.bottom);
+    const visibleLeft = Math.max(0, cRect.left);
+    const visibleRight = Math.min(window.innerWidth, cRect.right);
+
+    const EDGE_THRESHOLD = 60;
+    const MAX_SPEED = 24;
 
     let speedY = 0;
-    if (clientY > rect.bottom - EDGE_THRESHOLD) {
-      const distance = clientY - (rect.bottom - EDGE_THRESHOLD);
-      const intensity = Math.min(2, Math.max(0.1, distance / EDGE_THRESHOLD));
+    if (clientY > visibleBottom - EDGE_THRESHOLD) {
+      const dist = clientY - (visibleBottom - EDGE_THRESHOLD);
+      const intensity = Math.min(2.5, Math.max(0.2, dist / EDGE_THRESHOLD));
       speedY = intensity * MAX_SPEED;
-    } else if (clientY < rect.top + EDGE_THRESHOLD) {
-      const distance = (rect.top + EDGE_THRESHOLD) - clientY;
-      const intensity = Math.min(2, Math.max(0.1, distance / EDGE_THRESHOLD));
+    } else if (clientY < visibleTop + EDGE_THRESHOLD) {
+      const dist = (visibleTop + EDGE_THRESHOLD) - clientY;
+      const intensity = Math.min(2.5, Math.max(0.2, dist / EDGE_THRESHOLD));
       speedY = -intensity * MAX_SPEED;
     }
 
     let speedX = 0;
-    if (container && container.scrollWidth > container.clientWidth) {
-      if (clientX > rect.right - EDGE_THRESHOLD) {
-        const distance = clientX - (rect.right - EDGE_THRESHOLD);
-        speedX = Math.min(2, Math.max(0.1, distance / EDGE_THRESHOLD)) * MAX_SPEED;
-      } else if (clientX < rect.left + EDGE_THRESHOLD) {
-        const distance = (rect.left + EDGE_THRESHOLD) - clientX;
-        speedX = -Math.min(2, Math.max(0.1, distance / EDGE_THRESHOLD)) * MAX_SPEED;
-      }
+    if (clientX > visibleRight - EDGE_THRESHOLD) {
+      const dist = clientX - (visibleRight - EDGE_THRESHOLD);
+      speedX = Math.min(2.5, Math.max(0.2, dist / EDGE_THRESHOLD)) * MAX_SPEED;
+    } else if (clientX < visibleLeft + EDGE_THRESHOLD) {
+      const dist = (visibleLeft + EDGE_THRESHOLD) - clientX;
+      speedX = -Math.min(2.5, Math.max(0.2, dist / EDGE_THRESHOLD)) * MAX_SPEED;
     }
 
     if (speedY !== 0 || speedX !== 0) {
+      let scrolled = false;
       if (container) {
+        const prevTop = container.scrollTop;
+        const prevLeft = container.scrollLeft;
         if (speedY !== 0) container.scrollTop += speedY;
         if (speedX !== 0) container.scrollLeft += speedX;
-      } else {
+        if (container.scrollTop !== prevTop || container.scrollLeft !== prevLeft) {
+          scrolled = true;
+        }
+      }
+      // If container did not scroll (e.g. page/window is what scrolls), scroll window
+      if (!scrolled) {
         window.scrollBy(speedX, speedY);
       }
+
       updateSelectionAndMarquee(clientX, clientY);
       animFrameId.current = requestAnimationFrame(autoScrollStep);
     } else {
@@ -177,8 +204,11 @@ export function useSelection(options?: UseSelectionOptions | ContainerRef) {
     activeContainer.current = resolved;
 
     const currentScroll = getScroll(resolved);
-    startPoint.current = { x: e.clientX, y: e.clientY };
-    startScroll.current = currentScroll;
+    // Anchor in absolute content coordinates
+    startContentPoint.current = {
+      x: e.clientX + currentScroll.x,
+      y: e.clientY + currentScroll.y,
+    };
     currentPointer.current = { clientX: e.clientX, clientY: e.clientY };
     setIsDragging(true);
 
@@ -205,7 +235,7 @@ export function useSelection(options?: UseSelectionOptions | ContainerRef) {
 
     function handlePointerUp() {
       setIsDragging(false);
-      startPoint.current = null;
+      startContentPoint.current = null;
       currentPointer.current = null;
       if (animFrameId.current) {
         cancelAnimationFrame(animFrameId.current);

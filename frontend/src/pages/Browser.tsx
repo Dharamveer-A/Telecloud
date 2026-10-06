@@ -1543,7 +1543,7 @@ export default function Browser() {
 
       {/* Main */}
       <div 
-        className="flex-1 flex flex-col min-w-0 relative h-full overflow-hidden"
+        className="flex-1 flex flex-col min-w-0 min-h-0 relative h-full overflow-hidden"
         onDragEnter={onDragEnter}
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
@@ -1666,7 +1666,7 @@ export default function Browser() {
           </div>
         ) : (
           <>
-            <div className="px-4 sm:px-6 py-2.5 sm:py-3 border-b border-line flex items-center gap-2 sm:gap-3 flex-wrap">
+            <div className="px-4 sm:px-6 py-2.5 sm:py-3 border-b border-line flex items-center gap-2 sm:gap-3 flex-wrap shrink-0">
               <div className="flex-1 min-w-[160px] sm:min-w-[200px] relative flex items-center">
                 <input
                   ref={searchInputRef}
@@ -1764,7 +1764,7 @@ export default function Browser() {
             )}
 
             {!isGlobalSearch ? (
-              <div className="px-4 sm:px-6 py-2 sm:py-2.5 border-b border-line flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm overflow-x-auto no-scrollbar">
+              <div className="px-4 sm:px-6 py-2 sm:py-2.5 border-b border-line flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm overflow-x-auto no-scrollbar shrink-0">
                 {path.length > 1 && (
                   <div className="flex items-center gap-1 shrink-0 mr-1">
                     <button 
@@ -1811,7 +1811,7 @@ export default function Browser() {
                 {error && <span className="text-danger text-xs sm:text-sm ml-4">{error}</span>}
               </div>
             ) : (
-              <div className="px-6 py-2.5 bg-surface2/60 border-b border-line flex items-center justify-between text-xs animate-in fade-in">
+              <div className="px-6 py-2.5 bg-surface2/60 border-b border-line flex items-center justify-between text-xs animate-in fade-in shrink-0">
                 <div className="flex items-center gap-2">
                   <span className="text-teal font-medium flex items-center gap-1.5">
                     <Globe className="w-3.5 h-3.5" />
@@ -1834,7 +1834,7 @@ export default function Browser() {
 
         <main 
           ref={mainRef}
-          className="flex-1 px-3 sm:px-6 pt-3.5 sm:pt-5 pb-24 sm:pb-6 overflow-y-auto relative select-none"
+          className="flex-1 min-h-0 px-3 sm:px-6 pt-3.5 sm:pt-5 pb-24 sm:pb-6 overflow-y-auto relative select-none"
           onPointerDown={inTrash ? undefined : handlePointerDown}
           onContextMenu={inTrash ? undefined : handleMainContextMenu}
         >
