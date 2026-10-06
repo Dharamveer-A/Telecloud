@@ -1,4 +1,15 @@
 import { useState } from "react";
+import {
+  ArrowUp,
+  ArrowDown,
+  Check,
+  Pause,
+  Play,
+  X,
+  Minus,
+  ChevronUp,
+  ChevronDown,
+} from "lucide-react";
 import { transferStore, useTransfers, useTransferViewMode } from "../lib/transfers";
 
 function formatBytes(n: number) {
@@ -76,10 +87,20 @@ export default function TransfersPanel() {
                   transferStore.pauseAll();
                 }
               }}
-              className="text-xs text-dim hover:text-paper px-2 py-1 rounded bg-surface hover:bg-surface2 transition-colors border border-line whitespace-nowrap font-medium"
+              className="text-xs text-dim hover:text-paper px-2 py-1 rounded bg-surface hover:bg-surface2 transition-colors border border-line whitespace-nowrap font-medium flex items-center gap-1"
               title={isAllPaused ? "Resume all transfers" : "Pause all transfers"}
             >
-              {isAllPaused ? "▶ Resume All" : "⏸ Pause All"}
+              {isAllPaused ? (
+                <>
+                  <Play className="w-3 h-3 text-teal" />
+                  <span>Resume All</span>
+                </>
+              ) : (
+                <>
+                  <Pause className="w-3 h-3 text-amber-400" />
+                  <span>Pause All</span>
+                </>
+              )}
             </button>
           )}
 
@@ -111,10 +132,10 @@ export default function TransfersPanel() {
               e.stopPropagation();
               transferStore.setViewMode("minimized");
             }}
-            className="text-dim hover:text-paper text-sm px-1.5 py-0.5 rounded hover:bg-surface2 transition-colors flex items-center justify-center font-bold"
+            className="text-dim hover:text-paper w-6 h-6 rounded hover:bg-surface2 transition-colors flex items-center justify-center"
             title="Minimize to top right toolbar (Brave-style)"
           >
-            —
+            <Minus className="w-3.5 h-3.5" />
           </button>
 
           {/* Collapse/expand bottom bar */}
@@ -123,10 +144,10 @@ export default function TransfersPanel() {
               e.stopPropagation();
               setCollapsed(!collapsed);
             }}
-            className="text-dim hover:text-paper text-lg px-1 flex items-center justify-center"
+            className="text-dim hover:text-paper w-6 h-6 rounded hover:bg-surface2 transition-colors flex items-center justify-center"
             title={collapsed ? "Expand" : "Collapse"}
           >
-            {collapsed ? "▴" : "▾"}
+            {collapsed ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
           </button>
         </div>
       </div>
@@ -138,22 +159,29 @@ export default function TransfersPanel() {
             return (
               <div key={t.id} className="px-4 py-3 group">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs truncate flex-1 text-paper" title={t.name}>
-                    {t.kind === "upload" ? "⬆" : "⬇"} {t.name}
-                  </span>
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1" title={t.name}>
+                    {t.kind === "upload" ? (
+                      <ArrowUp className="w-3.5 h-3.5 text-teal shrink-0" />
+                    ) : (
+                      <ArrowDown className="w-3.5 h-3.5 text-teal shrink-0" />
+                    )}
+                    <span className="text-xs truncate text-paper">{t.name}</span>
+                  </div>
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <span className="text-[10px] text-dim">
-                      {t.status === "done"
-                        ? "✓"
-                        : t.status === "error"
-                        ? "Failed"
-                        : t.status === "cancelled"
-                        ? "Cancelled"
-                        : t.status === "paused"
-                        ? "Paused"
-                        : t.status === "queued"
-                        ? "Queued"
-                        : `${pct}%`}
+                    <span className="text-[10px] text-dim flex items-center gap-1">
+                      {t.status === "done" ? (
+                        <Check className="w-3.5 h-3.5 text-teal" />
+                      ) : t.status === "error" ? (
+                        "Failed"
+                      ) : t.status === "cancelled" ? (
+                        "Cancelled"
+                      ) : t.status === "paused" ? (
+                        "Paused"
+                      ) : t.status === "queued" ? (
+                        "Queued"
+                      ) : (
+                        `${pct}%`
+                      )}
                     </span>
 
                     {/* Individual Pause / Resume */}
@@ -163,10 +191,10 @@ export default function TransfersPanel() {
                           e.stopPropagation();
                           transferStore.pause(t.id);
                         }}
-                        className="text-dim hover:text-amber-400 w-5 h-5 flex items-center justify-center rounded hover:bg-surface2 transition-colors text-[10px]"
+                        className="text-dim hover:text-amber-400 w-5 h-5 flex items-center justify-center rounded hover:bg-surface2 transition-colors"
                         title="Pause"
                       >
-                        ⏸
+                        <Pause className="w-2.5 h-2.5" />
                       </button>
                     )}
                     {t.status === "paused" && (
@@ -175,10 +203,10 @@ export default function TransfersPanel() {
                           e.stopPropagation();
                           transferStore.resume(t.id);
                         }}
-                        className="text-amber-400 hover:text-teal w-5 h-5 flex items-center justify-center rounded hover:bg-surface2 transition-colors text-[10px]"
+                        className="text-amber-400 hover:text-teal w-5 h-5 flex items-center justify-center rounded hover:bg-surface2 transition-colors"
                         title="Resume"
                       >
-                        ▶
+                        <Play className="w-2.5 h-2.5" />
                       </button>
                     )}
                     {t.status === "queued" && (
@@ -187,10 +215,10 @@ export default function TransfersPanel() {
                           e.stopPropagation();
                           transferStore.pause(t.id);
                         }}
-                        className="text-dim hover:text-amber-400 w-5 h-5 flex items-center justify-center rounded hover:bg-surface2 transition-colors text-[10px]"
+                        className="text-dim hover:text-amber-400 w-5 h-5 flex items-center justify-center rounded hover:bg-surface2 transition-colors"
                         title="Pause"
                       >
-                        ⏸
+                        <Pause className="w-2.5 h-2.5" />
                       </button>
                     )}
 
@@ -201,10 +229,10 @@ export default function TransfersPanel() {
                           e.stopPropagation();
                           transferStore.cancel(t.id);
                         }}
-                        className="text-dim hover:text-danger w-5 h-5 flex items-center justify-center rounded hover:bg-surface2 transition-colors text-xs"
+                        className="text-dim hover:text-danger w-5 h-5 flex items-center justify-center rounded hover:bg-surface2 transition-colors"
                         title="Cancel this transfer"
                       >
-                        ✕
+                        <X className="w-3 h-3" />
                       </button>
                     )}
                   </div>

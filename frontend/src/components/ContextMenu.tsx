@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { MoreVertical } from "lucide-react";
 
 export interface ContextMenuAction {
   label: string;
@@ -26,7 +27,7 @@ export default function ContextMenu({ actions }: { actions: ContextMenuAction[] 
         className="w-6 h-6 flex items-center justify-center rounded hover:bg-surface2 text-dim hover:text-paper"
         aria-label="More options"
       >
-        ⋮
+        <MoreVertical className="w-4 h-4" />
       </button>
       {open && (
         <div className="absolute right-0 top-full mt-1 min-w-[140px] bg-surface2 border border-line rounded shadow-lg z-30 text-sm overflow-hidden py-1">

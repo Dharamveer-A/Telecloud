@@ -1,4 +1,13 @@
 import { useRef, useEffect } from "react";
+import {
+  ArrowUp,
+  ArrowDown,
+  Check,
+  Pause,
+  Play,
+  X,
+  ExternalLink,
+} from "lucide-react";
 import { useTransfers, useTransferViewMode, transferStore } from "../lib/transfers";
 
 function formatBytes(n: number) {
@@ -127,13 +136,13 @@ export default function TransfersTopButton() {
         {/* Center Icon */}
         <div className="relative z-10 flex items-center justify-center text-xs">
           {isAllPaused ? (
-            <span className="text-amber-400 text-[10px] font-bold">⏸</span>
+            <Pause className="w-2.5 h-2.5 text-amber-400" />
           ) : hasActive ? (
-            <span className="text-teal text-[11px] animate-pulse font-bold">↑</span>
+            <ArrowUp className="w-3 h-3 text-teal animate-pulse" />
           ) : failed.length > 0 ? (
-            <span className="text-danger text-[10px] font-bold">✕</span>
+            <X className="w-2.5 h-2.5 text-danger" />
           ) : (
-            <span className="text-teal text-[10px] font-bold">✓</span>
+            <Check className="w-2.5 h-2.5 text-teal" />
           )}
         </div>
 
@@ -167,9 +176,19 @@ export default function TransfersTopButton() {
                       transferStore.pauseAll();
                     }
                   }}
-                  className="text-xs text-dim hover:text-paper px-2 py-0.5 rounded bg-surface hover:bg-surface2 border border-line font-medium transition-colors"
+                  className="text-xs text-dim hover:text-paper px-2 py-0.5 rounded bg-surface hover:bg-surface2 border border-line font-medium transition-colors inline-flex items-center gap-1"
                 >
-                  {isAllPaused ? "▶ Resume All" : "⏸ Pause All"}
+                  {isAllPaused ? (
+                    <>
+                      <Play className="w-2.5 h-2.5 fill-current" />
+                      <span>Resume All</span>
+                    </>
+                  ) : (
+                    <>
+                      <Pause className="w-2.5 h-2.5 fill-current" />
+                      <span>Pause All</span>
+                    </>
+                  )}
                 </button>
               )}
               {hasPending ? (
@@ -192,10 +211,10 @@ export default function TransfersTopButton() {
                 onClick={() => {
                   transferStore.setViewMode("bottom");
                 }}
-                className="text-dim hover:text-paper text-xs px-1.5 py-0.5 rounded hover:bg-surface transition-colors"
+                className="text-dim hover:text-paper w-6 h-6 rounded hover:bg-surface transition-colors flex items-center justify-center"
                 title="Pop out into bottom panel"
               >
-                ⤢
+                <ExternalLink className="w-3 h-3" />
               </button>
             </div>
           </div>
@@ -207,50 +226,60 @@ export default function TransfersTopButton() {
               return (
                 <div key={t.id} className="px-4 py-2.5 hover:bg-surface2/40 transition-colors">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs truncate flex-1 text-paper font-medium" title={t.name}>
-                      {t.kind === "upload" ? "↑" : "↓"} {t.name}
-                    </span>
+                    <div className="flex items-center gap-1.5 min-w-0 flex-1" title={t.name}>
+                      {t.kind === "upload" ? (
+                        <ArrowUp className="w-3.5 h-3.5 text-teal shrink-0" />
+                      ) : (
+                        <ArrowDown className="w-3.5 h-3.5 text-teal shrink-0" />
+                      )}
+                      <span className="text-xs truncate text-paper font-medium">{t.name}</span>
+                    </div>
                     <div className="flex items-center gap-1.5 shrink-0">
-                      <span className="text-[10px] text-dim">
-                        {t.status === "done"
-                          ? "✓ Done"
-                          : t.status === "error"
-                          ? "Failed"
-                          : t.status === "cancelled"
-                          ? "Cancelled"
-                          : t.status === "paused"
-                          ? "Paused"
-                          : t.status === "queued"
-                          ? "Queued"
-                          : `${pct}%`}
+                      <span className="text-[10px] text-dim flex items-center gap-1">
+                        {t.status === "done" ? (
+                          <>
+                            <Check className="w-3 h-3 text-teal" />
+                            <span>Done</span>
+                          </>
+                        ) : t.status === "error" ? (
+                          "Failed"
+                        ) : t.status === "cancelled" ? (
+                          "Cancelled"
+                        ) : t.status === "paused" ? (
+                          "Paused"
+                        ) : t.status === "queued" ? (
+                          "Queued"
+                        ) : (
+                          `${pct}%`
+                        )}
                       </span>
 
                       {/* Pause / Resume button */}
                       {t.status === "active" && (
                         <button
                           onClick={() => transferStore.pause(t.id)}
-                          className="text-dim hover:text-amber-400 w-5 h-5 flex items-center justify-center rounded hover:bg-surface transition-colors text-[10px]"
+                          className="text-dim hover:text-amber-400 w-5 h-5 flex items-center justify-center rounded hover:bg-surface transition-colors"
                           title="Pause"
                         >
-                          ⏸
+                          <Pause className="w-2.5 h-2.5" />
                         </button>
                       )}
                       {t.status === "paused" && (
                         <button
                           onClick={() => transferStore.resume(t.id)}
-                          className="text-amber-400 hover:text-teal w-5 h-5 flex items-center justify-center rounded hover:bg-surface transition-colors text-[10px]"
+                          className="text-amber-400 hover:text-teal w-5 h-5 flex items-center justify-center rounded hover:bg-surface transition-colors"
                           title="Resume"
                         >
-                          ▶
+                          <Play className="w-2.5 h-2.5" />
                         </button>
                       )}
                       {t.status === "queued" && (
                         <button
                           onClick={() => transferStore.pause(t.id)}
-                          className="text-dim hover:text-amber-400 w-5 h-5 flex items-center justify-center rounded hover:bg-surface transition-colors text-[10px]"
+                          className="text-dim hover:text-amber-400 w-5 h-5 flex items-center justify-center rounded hover:bg-surface transition-colors"
                           title="Pause"
                         >
-                          ⏸
+                          <Pause className="w-2.5 h-2.5" />
                         </button>
                       )}
 
@@ -258,10 +287,10 @@ export default function TransfersTopButton() {
                       {(t.status === "active" || t.status === "queued" || t.status === "paused") && (
                         <button
                           onClick={() => transferStore.cancel(t.id)}
-                          className="text-dim hover:text-danger w-5 h-5 flex items-center justify-center rounded hover:bg-surface transition-colors text-xs"
+                          className="text-dim hover:text-danger w-5 h-5 flex items-center justify-center rounded hover:bg-surface transition-colors"
                           title="Cancel"
                         >
-                          ✕
+                          <X className="w-3 h-3" />
                         </button>
                       )}
                     </div>

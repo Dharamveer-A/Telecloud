@@ -1,4 +1,18 @@
 import React, { useState, useEffect } from "react";
+import {
+  Folder,
+  FileText,
+  X,
+  Globe,
+  Laptop,
+  Zap,
+  AlertTriangle,
+  Check,
+  Lock,
+  Unlock,
+  Archive,
+  Eye,
+} from "lucide-react";
 import { api } from "../lib/api";
 
 export interface ShareTargetItem {
@@ -150,7 +164,11 @@ export default function ShareModal({ item, folderPassword, onClose }: Props) {
       >
         <div className="flex items-center justify-between pb-3 border-b border-line mb-4">
           <div className="flex items-center gap-2.5">
-            <span className="text-xl">{item.kind === "folder" ? "📁" : "📄"}</span>
+            {item.kind === "folder" ? (
+              <Folder className="w-5 h-5 text-teal shrink-0" />
+            ) : (
+              <FileText className="w-5 h-5 text-teal shrink-0" />
+            )}
             <div>
               <h2 className="font-display text-base font-semibold text-paper truncate max-w-[320px]">
                 Share "{item.name}"
@@ -162,7 +180,7 @@ export default function ShareModal({ item, folderPassword, onClose }: Props) {
             onClick={onClose}
             className="text-dim hover:text-paper p-1 rounded-md hover:bg-surface2 transition-colors"
           >
-            ✕
+            <X className="w-4 h-4" />
           </button>
         </div>
 
@@ -185,8 +203,18 @@ export default function ShareModal({ item, folderPassword, onClose }: Props) {
               {tunnelUrl ? (
                 <div className="flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-teal animate-pulse" />
-                  <span className="font-medium text-teal">
-                    {useWorldwideLink ? "🌐 Worldwide Online Link (Active)" : "💻 Local Network Link"}
+                  <span className="font-medium text-teal flex items-center gap-1.5">
+                    {useWorldwideLink ? (
+                      <>
+                        <Globe className="w-3.5 h-3.5 text-teal shrink-0" />
+                        <span>Worldwide Online Link (Active)</span>
+                      </>
+                    ) : (
+                      <>
+                        <Laptop className="w-3.5 h-3.5 text-dim shrink-0" />
+                        <span>Local Network Link</span>
+                      </>
+                    )}
                   </span>
                 </div>
               ) : (
@@ -218,7 +246,7 @@ export default function ShareModal({ item, folderPassword, onClose }: Props) {
                     </>
                   ) : (
                     <>
-                      <span>⚡</span>
+                      <Zap className="w-3.5 h-3.5" />
                       <span>Go Worldwide</span>
                     </>
                   )}
@@ -255,11 +283,13 @@ export default function ShareModal({ item, folderPassword, onClose }: Props) {
                 <span className="text-dim block text-[11px] mb-0.5">Status</span>
                 {existingShare.isExpired ? (
                   <span className="text-danger font-medium flex items-center gap-1">
-                    <span>⚠️</span> Expired
+                    <AlertTriangle className="w-3.5 h-3.5 text-danger shrink-0" />
+                    <span>Expired</span>
                   </span>
                 ) : (
                   <span className="text-teal font-medium flex items-center gap-1">
-                    <span>✓</span> Active
+                    <Check className="w-3.5 h-3.5 text-teal shrink-0" />
+                    <span>Active</span>
                   </span>
                 )}
               </div>
@@ -267,7 +297,17 @@ export default function ShareModal({ item, folderPassword, onClose }: Props) {
               <div className="bg-surface2/40 border border-line/60 rounded-lg p-3">
                 <span className="text-dim block text-[11px] mb-0.5">Protection</span>
                 <span className="text-paper font-medium flex items-center gap-1">
-                  {existingShare.hasPassword ? "🔒 Password required" : "🔓 Public (No password)"}
+                  {existingShare.hasPassword ? (
+                    <>
+                      <Lock className="w-3.5 h-3.5 text-brass shrink-0" />
+                      <span>Password required</span>
+                    </>
+                  ) : (
+                    <>
+                      <Unlock className="w-3.5 h-3.5 text-teal shrink-0" />
+                      <span>Public (No password)</span>
+                    </>
+                  )}
                 </span>
               </div>
 
@@ -295,8 +335,18 @@ export default function ShareModal({ item, folderPassword, onClose }: Props) {
               {item.kind === "folder" && (
                 <div className="col-span-2 bg-surface2/40 border border-line/60 rounded-lg p-2.5 flex items-center justify-between">
                   <span className="text-dim text-[11px]">Share Format</span>
-                  <span className="text-paper font-medium text-xs">
-                    {existingShare.shareMode === "zip_only" ? "🗜️ ZIP Download Only" : "👁️ Preview & ZIP"}
+                  <span className="text-paper font-medium text-xs flex items-center gap-1.5">
+                    {existingShare.shareMode === "zip_only" ? (
+                      <>
+                        <Archive className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                        <span>ZIP Download Only</span>
+                      </>
+                    ) : (
+                      <>
+                        <Eye className="w-3.5 h-3.5 text-teal shrink-0" />
+                        <span>Preview & ZIP</span>
+                      </>
+                    )}
                   </span>
                 </div>
               )}
@@ -363,7 +413,8 @@ export default function ShareModal({ item, folderPassword, onClose }: Props) {
                     }`}
                   >
                     <span className="font-semibold text-xs flex items-center gap-1.5">
-                      <span>👁️</span> Preview & ZIP
+                      <Eye className="w-3.5 h-3.5 text-teal shrink-0" />
+                      <span>Preview & ZIP</span>
                     </span>
                     <span className="text-[10px] opacity-75">
                       Recipients can browse files, preview media, & download ZIP
@@ -379,7 +430,8 @@ export default function ShareModal({ item, folderPassword, onClose }: Props) {
                     }`}
                   >
                     <span className="font-semibold text-xs flex items-center gap-1.5">
-                      <span>🗜️</span> ZIP Only
+                      <Archive className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                      <span>ZIP Only</span>
                     </span>
                     <span className="text-[10px] opacity-75">
                       Direct single-click ZIP archive download
@@ -441,8 +493,9 @@ export default function ShareModal({ item, folderPassword, onClose }: Props) {
 
             {item.locked && !folderPassword && (
               <div className="border border-brass/30 bg-brass/10 rounded-lg p-3 space-y-2">
-                <label className="text-xs font-semibold text-brass flex items-center gap-1">
-                  <span>🔒</span> Unlock Folder to Share
+                <label className="text-xs font-semibold text-brass flex items-center gap-1.5">
+                  <Lock className="w-3.5 h-3.5 text-brass shrink-0" />
+                  <span>Unlock Folder to Share</span>
                 </label>
                 <p className="text-[11px] text-dim">
                   This item is encrypted. Enter its folder password so TeleCloud can grant share access.

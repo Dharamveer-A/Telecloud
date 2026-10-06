@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { Play } from "lucide-react";
 import { api } from "../lib/api";
 
 interface ThumbnailProps {
@@ -104,8 +105,8 @@ export default function Thumbnail({ fileId, mimeType, password }: ThumbnailProps
 
       {/* Video Indicator Overlay */}
       {isVideo && loaded && !error && (
-        <div className="absolute bottom-1 right-1 bg-black/70 backdrop-blur-sm text-white text-[9px] px-1 py-0.5 rounded flex items-center gap-0.5 font-medium pointer-events-none shadow">
-          <span>▶</span>
+        <div className="absolute bottom-1 right-1 bg-black/70 backdrop-blur-sm text-white text-[9px] px-1.5 py-0.5 rounded flex items-center gap-0.5 font-medium pointer-events-none shadow">
+          <Play className="w-2.5 h-2.5 fill-current" />
         </div>
       )}
 

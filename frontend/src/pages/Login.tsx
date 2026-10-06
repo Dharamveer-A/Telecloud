@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
+import { ChevronDown, Globe } from "lucide-react";
 import { api, setToken } from "../lib/api";
 import { COUNTRIES, Country, detectCountry } from "../lib/countries";
 import ThemeToggle from "../components/ThemeToggle";
@@ -64,7 +65,7 @@ export default function Login() {
     if (match) {
       setCountryFlag(match.flag);
     } else {
-      setCountryFlag("🌐");
+      setCountryFlag("");
     }
   }
 
@@ -174,10 +175,10 @@ export default function Login() {
                     <button
                       type="button"
                       onClick={() => setShowCountryPicker(!showCountryPicker)}
-                      className="text-base mr-1 hover:scale-110 transition-transform cursor-pointer select-none"
+                      className="text-base mr-1 hover:scale-110 transition-transform cursor-pointer select-none flex items-center justify-center"
                       title="Select country"
                     >
-                      {countryFlag}
+                      {countryFlag ? countryFlag : <Globe className="w-4 h-4 text-dim" />}
                     </button>
                     <input
                       type="text"
@@ -190,10 +191,10 @@ export default function Login() {
                     <button
                       type="button"
                       onClick={() => setShowCountryPicker(!showCountryPicker)}
-                      className="text-dim text-[10px] ml-0.5 hover:text-paper cursor-pointer select-none"
+                      className="text-dim text-[10px] ml-0.5 hover:text-paper cursor-pointer select-none flex items-center"
                       title="Browse countries"
                     >
-                      ▾
+                      <ChevronDown className="w-3.5 h-3.5" />
                     </button>
                   </div>
 

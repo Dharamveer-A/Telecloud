@@ -1,7 +1,26 @@
 import React, { useState, useEffect } from "react";
 import { useParams } from "react-router-dom";
+import {
+  Cloud,
+  Download,
+  Share2,
+  Check,
+  Clock,
+  Search,
+  Lock,
+  Folder,
+  FileText,
+  File,
+  LayoutGrid,
+  List,
+  ArrowRight,
+  Music,
+  Play,
+  X,
+} from "lucide-react";
 import { api, saveBlob, TransferProgress } from "../lib/api";
 import ThemeToggle from "../components/ThemeToggle";
+import { FileIcon } from "../components/FileIcon";
 
 function formatBytes(n: number) {
   if (!n || n < 1024) return `${n || 0} B`;
@@ -13,17 +32,6 @@ function formatBytes(n: number) {
     i++;
   }
   return `${v.toFixed(1)} ${units[i]}`;
-}
-
-function iconFor(mime?: string, isFolder?: boolean) {
-  if (isFolder) return "📁";
-  if (!mime) return "📦";
-  if (mime.startsWith("image/")) return "🖼️";
-  if (mime.startsWith("video/")) return "🎬";
-  if (mime.startsWith("audio/")) return "🎵";
-  if (mime === "application/pdf") return "📄";
-  if (mime.includes("zip") || mime.includes("archive") || mime.includes("tar")) return "🗜️";
-  return "📦";
 }
 
 function PublicFileThumbnail({
@@ -39,13 +47,13 @@ function PublicFileThumbnail({
 }) {
   const isImage = mimeType?.startsWith("image/");
   const isVideo = mimeType?.startsWith("video/");
-  if (!isImage && !isVideo) return <span className="text-2xl">{iconFor(mimeType)}</span>;
+  if (!isImage && !isVideo) return <FileIcon mime={mimeType} className="w-8 h-8" />;
 
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
   const url = api.publicShareThumbnailUrl(token, fileId, password);
 
-  if (error) return <span className="text-2xl">{iconFor(mimeType)}</span>;
+  if (error) return <FileIcon mime={mimeType} className="w-8 h-8" />;
 
   return (
     <div className="w-full h-full relative flex items-center justify-center overflow-hidden bg-surface2/40">
@@ -61,7 +69,7 @@ function PublicFileThumbnail({
       />
       {isVideo && loaded && (
         <div className="absolute bottom-1 right-1 bg-black/70 backdrop-blur-sm text-white text-[9px] px-1.5 py-0.5 rounded flex items-center gap-0.5 font-medium pointer-events-none shadow">
-          <span>▶</span>
+          <Play className="w-2.5 h-2.5 fill-current" />
         </div>
       )}
       {!loaded && <div className="absolute inset-0 bg-surface2/50 animate-pulse" />}
@@ -251,8 +259,8 @@ interface DownloadProgressState extends TransferProgress {
     <div className="min-h-screen bg-ink text-paper flex flex-col selection:bg-teal selection:text-ink font-sans">
       {/* Top Header */}
       <header className="border-b border-line bg-surface/50 backdrop-blur sticky top-0 z-30 px-6 py-3.5 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <span className="text-xl">☁️</span>
+        <div className="flex items-center gap-2.5">
+          <Cloud className="w-5 h-5 text-teal shrink-0" />
           <span className="font-display font-bold tracking-tight text-paper text-lg">
             TeleCloud
           </span>
@@ -268,7 +276,7 @@ interface DownloadProgressState extends TransferProgress {
               className="text-xs bg-teal text-ink font-semibold rounded px-3 py-1.5 hover:opacity-90 transition-opacity flex items-center gap-1.5 shadow-sm"
               title="Download entire folder as a ZIP archive"
             >
-              <span>⬇️</span>
+              <Download className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Download as ZIP</span>
               <span className="sm:hidden">ZIP</span>
             </button>
@@ -277,7 +285,7 @@ interface DownloadProgressState extends TransferProgress {
             onClick={handleCopyLink}
             className="text-xs text-dim hover:text-paper bg-surface2 hover:bg-surface border border-line rounded px-3 py-1.5 transition-colors flex items-center gap-1.5 font-medium"
           >
-            <span>{copied ? "✓" : "🔗"}</span>
+            {copied ? <Check className="w-3.5 h-3.5 text-teal" /> : <Share2 className="w-3.5 h-3.5" />}
             <span>{copied ? "Copied!" : "Copy Link"}</span>
           </button>
           <ThemeToggle compact />
@@ -294,8 +302,8 @@ interface DownloadProgressState extends TransferProgress {
             </div>
           ) : isExpired ? (
             <div className="bg-surface border border-line rounded-2xl p-10 text-center shadow-2xl space-y-4">
-              <div className="w-16 h-16 bg-danger/10 text-danger rounded-2xl flex items-center justify-center text-3xl mx-auto border border-danger/20">
-                ⏳
+              <div className="w-16 h-16 bg-danger/10 text-danger rounded-2xl flex items-center justify-center mx-auto border border-danger/20">
+                <Clock className="w-8 h-8 text-danger" />
               </div>
               <h1 className="font-display text-2xl font-bold text-paper">Link Expired</h1>
               <p className="text-sm text-dim max-w-md mx-auto">
@@ -304,8 +312,8 @@ interface DownloadProgressState extends TransferProgress {
             </div>
           ) : error ? (
             <div className="bg-surface border border-line rounded-2xl p-10 text-center shadow-2xl space-y-4">
-              <div className="w-16 h-16 bg-surface2 text-dim rounded-2xl flex items-center justify-center text-3xl mx-auto border border-line">
-                🔍
+              <div className="w-16 h-16 bg-surface2 text-dim rounded-2xl flex items-center justify-center mx-auto border border-line">
+                <Search className="w-8 h-8 text-dim" />
               </div>
               <h1 className="font-display text-2xl font-bold text-paper">Item Not Found</h1>
               <p className="text-sm text-dim max-w-md mx-auto">
@@ -316,8 +324,8 @@ interface DownloadProgressState extends TransferProgress {
             /* Password Protection Gate */
             <div className="bg-surface border border-line rounded-2xl p-8 shadow-2xl max-w-md mx-auto space-y-6">
               <div className="text-center space-y-2">
-                <div className="w-14 h-14 bg-brass/10 text-brass rounded-2xl flex items-center justify-center text-2xl mx-auto border border-brass/20">
-                  🔒
+                <div className="w-14 h-14 bg-brass/10 text-brass rounded-2xl flex items-center justify-center mx-auto border border-brass/20">
+                  <Lock className="w-7 h-7 text-brass" />
                 </div>
                 <h1 className="font-display text-xl font-bold text-paper">Password Protected</h1>
                 <p className="text-xs text-dim">
@@ -368,7 +376,7 @@ interface DownloadProgressState extends TransferProgress {
               <div className="p-6 border-b border-line bg-surface2/40 space-y-4">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div className="flex items-center gap-3">
-                    <span className="text-3xl">📁</span>
+                    <Folder className="w-8 h-8 text-teal shrink-0" />
                     <div>
                       <h1 className="font-display text-xl sm:text-2xl font-bold text-paper">
                         {folderContents?.currentFolder?.name || shareData.name}
@@ -386,7 +394,7 @@ interface DownloadProgressState extends TransferProgress {
                       disabled={downloading}
                       className="bg-teal hover:opacity-90 disabled:opacity-50 text-ink font-semibold rounded-xl py-2.5 px-4 text-xs flex items-center gap-2 transition-all shadow-md shadow-teal/10"
                     >
-                      <span>⬇️</span>
+                      <Download className="w-3.5 h-3.5" />
                       <span>Download as ZIP</span>
                       <span className="opacity-75 text-[11px] font-normal">
                         ({formatBytes(shareData.totalSize)})
@@ -402,7 +410,7 @@ interface DownloadProgressState extends TransferProgress {
                         }`}
                         title="Grid view"
                       >
-                        ⊞
+                        <LayoutGrid className="w-3.5 h-3.5" />
                       </button>
                       <button
                         onClick={() => setViewMode("list")}
@@ -411,7 +419,7 @@ interface DownloadProgressState extends TransferProgress {
                         }`}
                         title="List view"
                       >
-                        ☰
+                        <List className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   </div>
@@ -495,7 +503,7 @@ interface DownloadProgressState extends TransferProgress {
                               className="bg-surface2/50 hover:bg-surface2 border border-line rounded-xl p-3.5 flex items-center justify-between cursor-pointer transition-all hover:border-teal/50 group"
                             >
                               <div className="flex items-center gap-3 min-w-0">
-                                <span className="text-2xl group-hover:scale-110 transition-transform">📁</span>
+                                <Folder className="w-6 h-6 text-teal group-hover:scale-110 transition-transform shrink-0" />
                                 <div className="min-w-0">
                                   <p className="text-sm font-medium text-paper truncate group-hover:text-teal transition-colors">
                                     {sub.name}
@@ -505,7 +513,7 @@ interface DownloadProgressState extends TransferProgress {
                                   </p>
                                 </div>
                               </div>
-                              <span className="text-dim text-xs group-hover:text-teal transition-colors">➔</span>
+                              <ArrowRight className="w-4 h-4 text-dim group-hover:text-teal transition-colors shrink-0" />
                             </div>
                           ))}
                         </div>
@@ -553,7 +561,7 @@ interface DownloadProgressState extends TransferProgress {
                                     className="opacity-0 group-hover:opacity-100 text-dim hover:text-teal p-1.5 rounded hover:bg-surface transition-all text-xs shrink-0"
                                     title="Download file"
                                   >
-                                    ⬇️
+                                    <Download className="w-3.5 h-3.5" />
                                   </button>
                                 </div>
                               </div>
@@ -569,7 +577,7 @@ interface DownloadProgressState extends TransferProgress {
                                 className="px-4 py-3 flex items-center justify-between gap-3 hover:bg-surface2/60 cursor-pointer transition-colors group"
                               >
                                 <div className="flex items-center gap-3 min-w-0 flex-1">
-                                  <span className="text-xl shrink-0">{iconFor(file.mimeType)}</span>
+                                  <FileIcon mime={file.mimeType} className="w-5 h-5 shrink-0" />
                                   <div className="min-w-0">
                                     <p className="text-xs font-medium text-paper truncate group-hover:text-teal transition-colors">
                                       {file.name}
@@ -605,7 +613,7 @@ interface DownloadProgressState extends TransferProgress {
                     ) : (
                       (!folderContents?.subfolders || folderContents.subfolders.length === 0) && (
                         <div className="py-16 text-center text-dim text-sm space-y-2">
-                          <span className="text-4xl block">📂</span>
+                          <Folder className="w-12 h-12 text-dim/50 mx-auto" />
                           <p>This folder is empty</p>
                         </div>
                       )
@@ -616,7 +624,10 @@ interface DownloadProgressState extends TransferProgress {
 
               {/* Footer info */}
               <div className="px-6 py-3.5 bg-surface2/30 border-t border-line flex items-center justify-between text-xs text-dim">
-                <span>📥 {shareData.downloadsCount || 0} downloads</span>
+                <span className="flex items-center gap-1.5">
+                  <Download className="w-3.5 h-3.5" />
+                  <span>{shareData.downloadsCount || 0} downloads</span>
+                </span>
                 <span className="text-[11px] opacity-70">
                   Powered by TeleCloud • Telegram as Unlimited Cloud Storage
                 </span>
@@ -630,8 +641,8 @@ interface DownloadProgressState extends TransferProgress {
               {/* Hero Item Details */}
               <div className="p-8 space-y-6">
                 <div className="flex items-start gap-4">
-                  <div className="w-16 h-16 rounded-2xl bg-surface2 border border-line flex items-center justify-center text-3xl shrink-0 shadow-inner">
-                    {iconFor(shareData.mimeType, shareData.targetType === "folder")}
+                  <div className="w-16 h-16 rounded-2xl bg-surface2 border border-line flex items-center justify-center shrink-0 shadow-inner">
+                    <FileIcon isFolder={shareData.targetType === "folder"} mime={shareData.mimeType} className="w-8 h-8" />
                   </div>
 
                   <div className="flex-1 min-w-0">
@@ -641,12 +652,14 @@ interface DownloadProgressState extends TransferProgress {
                     <div className="flex flex-wrap items-center gap-2 mt-2 text-xs text-dim">
                       {shareData.targetType === "folder" ? (
                         <>
-                          <span className="bg-surface2 px-2 py-0.5 rounded text-paper font-medium">
-                            📁 {shareData.fileCount || 0} files
+                          <span className="bg-surface2 px-2 py-0.5 rounded text-paper font-medium flex items-center gap-1">
+                            <FileText className="w-3 h-3 text-teal" />
+                            <span>{shareData.fileCount || 0} files</span>
                           </span>
                           {shareData.folderCount > 0 && (
-                            <span className="bg-surface2 px-2 py-0.5 rounded text-paper font-medium">
-                              📂 {shareData.folderCount} subfolders
+                            <span className="bg-surface2 px-2 py-0.5 rounded text-paper font-medium flex items-center gap-1">
+                              <Folder className="w-3 h-3 text-teal" />
+                              <span>{shareData.folderCount} subfolders</span>
                             </span>
                           )}
                           <span>•</span>
@@ -689,7 +702,7 @@ interface DownloadProgressState extends TransferProgress {
 
                     {isAudio && (
                       <div className="p-6 flex flex-col items-center justify-center gap-3">
-                        <span className="text-4xl">🎵</span>
+                        <Music className="w-12 h-12 text-teal" />
                         <audio controls preload="metadata" src={mediaStreamUrl} className="w-full max-w-md" />
                       </div>
                     )}
@@ -749,7 +762,7 @@ interface DownloadProgressState extends TransferProgress {
                     disabled={downloading}
                     className="flex-1 bg-teal hover:opacity-90 disabled:opacity-50 text-ink font-semibold rounded-xl py-3 px-6 text-sm flex items-center justify-center gap-2 transition-all shadow-lg shadow-teal/10 cursor-pointer"
                   >
-                    <span>⬇️</span>
+                    <Download className="w-4 h-4" />
                     <span>
                       {shareData.targetType === "folder" ? "Download as ZIP" : "Download File"}
                     </span>
@@ -772,16 +785,22 @@ interface DownloadProgressState extends TransferProgress {
               {/* Footer Metadata Info */}
               <div className="px-8 py-4 bg-surface2/30 flex flex-wrap items-center justify-between gap-3 text-xs text-dim">
                 <div className="flex items-center gap-4">
-                  <span>📥 {shareData.downloadsCount || 0} downloads</span>
+                  <span className="flex items-center gap-1.5">
+                    <Download className="w-3.5 h-3.5" />
+                    <span>{shareData.downloadsCount || 0} downloads</span>
+                  </span>
                   {shareData.expiresAt && (
-                    <span>
-                      ⏱️ Expires{" "}
-                      {new Date(shareData.expiresAt).toLocaleDateString(undefined, {
-                        month: "short",
-                        day: "numeric",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
+                    <span className="flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5" />
+                      <span>
+                        Expires{" "}
+                        {new Date(shareData.expiresAt).toLocaleDateString(undefined, {
+                          month: "short",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </span>
                     </span>
                   )}
                 </div>
@@ -808,7 +827,7 @@ interface DownloadProgressState extends TransferProgress {
             {/* Modal Header */}
             <div className="px-5 py-3 border-b border-line flex items-center justify-between bg-surface2 shrink-0">
               <div className="flex items-center gap-2.5 min-w-0 mr-3">
-                <span className="text-xl shrink-0">{iconFor(previewFile.mimeType)}</span>
+                <FileIcon mime={previewFile.mimeType} className="w-5 h-5 shrink-0" />
                 <span className="text-paper text-sm font-medium truncate">{previewFile.name}</span>
                 <span className="text-xs text-dim shrink-0">({formatBytes(previewFile.size)})</span>
               </div>
@@ -817,14 +836,15 @@ interface DownloadProgressState extends TransferProgress {
                   onClick={() => handleDownloadSingleFile(previewFile)}
                   className="text-xs bg-teal text-ink font-semibold rounded-lg px-3 py-1.5 hover:opacity-90 transition-opacity flex items-center gap-1.5"
                 >
-                  <span>⬇️</span>
+                  <Download className="w-3.5 h-3.5" />
                   <span>Download</span>
                 </button>
                 <button
                   onClick={() => setPreviewFile(null)}
-                  className="text-dim hover:text-paper p-1 rounded-md hover:bg-surface transition-colors"
+                  className="text-dim hover:text-paper p-1 rounded-md hover:bg-surface transition-colors flex items-center justify-center"
+                  aria-label="Close"
                 >
-                  ✕
+                  <X className="w-4 h-4" />
                 </button>
               </div>
             </div>
@@ -842,7 +862,7 @@ interface DownloadProgressState extends TransferProgress {
               )}
               {previewFile.mimeType.startsWith("audio/") && (
                 <div className="p-8 flex flex-col items-center gap-4">
-                  <span className="text-6xl animate-bounce">🎵</span>
+                  <Music className="w-16 h-16 text-teal animate-pulse" />
                   <audio
                     controls
                     autoPlay
@@ -870,7 +890,7 @@ interface DownloadProgressState extends TransferProgress {
                 !previewFile.mimeType.startsWith("image/") &&
                 previewFile.mimeType !== "application/pdf" && (
                   <div className="text-center py-12 space-y-3">
-                    <span className="text-5xl block">📦</span>
+                    <File className="w-16 h-16 text-dim mx-auto" />
                     <p className="text-paper font-medium text-sm">{previewFile.name}</p>
                     <p className="text-xs text-dim">No inline preview available for this file type.</p>
                     <button

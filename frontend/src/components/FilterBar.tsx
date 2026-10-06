@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Plus, X } from "lucide-react";
 import { ActiveFilter, BuiltinFilterKey, CustomFilter } from "../lib/filters";
 
 const BUILTINS: { key: BuiltinFilterKey; label: string }[] = [
@@ -60,11 +61,14 @@ export default function FilterBar({
       {customFilters.map((f) => (
         <span key={f.id} className={`${chipClass(active?.type === "custom" && active.id === f.id)} flex items-center gap-1.5`}>
           <button onClick={() => onChange({ type: "custom", id: f.id })}>{f.label}</button>
-          <button onClick={() => onRemoveCustom(f.id)} className="opacity-60 hover:opacity-100">✕</button>
+          <button onClick={() => onRemoveCustom(f.id)} className="opacity-60 hover:opacity-100 flex items-center justify-center" aria-label="Remove filter">
+            <X className="w-3 h-3" />
+          </button>
         </span>
       ))}
-      <button onClick={() => setShowForm(true)} className="px-2.5 py-1 rounded-full text-xs border border-dashed border-line text-dim hover:text-paper whitespace-nowrap shrink-0">
-        + Custom filter
+      <button onClick={() => setShowForm(true)} className="px-2.5 py-1 rounded-full text-xs border border-dashed border-line text-dim hover:text-paper whitespace-nowrap shrink-0 flex items-center gap-1">
+        <Plus className="w-3 h-3" />
+        <span>Custom filter</span>
       </button>
 
       {showForm && (

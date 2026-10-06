@@ -1,5 +1,31 @@
 import { useEffect, useRef, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
+import {
+  Folder,
+  FolderPlus,
+  FolderUp,
+  FolderInput,
+  Lock,
+  Unlock,
+  File,
+  FileText,
+  Trash2,
+  Share2,
+  LogOut,
+  RefreshCw,
+  LayoutGrid,
+  List,
+  Home,
+  Globe,
+  X,
+  Plus,
+  Undo2,
+  Download,
+  Upload,
+  MoreVertical,
+  ChevronDown,
+  ChevronRight,
+} from "lucide-react";
 import { api, clearToken, saveBlob, computeFileSHA256 } from "../lib/api";
 import { itemsToTree, filesWithPathsToTree, DroppedNode, flattenFiles } from "../lib/dragDrop";
 import { ActiveFilter, CustomFilter, loadCustomFilters, saveCustomFilters, matchesBuiltin, matchesCustom } from "../lib/filters";
@@ -15,6 +41,7 @@ import TransfersPanel from "../components/TransfersPanel";
 import TransfersTopButton from "../components/TransfersTopButton";
 import ShareModal, { ShareTargetItem } from "../components/ShareModal";
 import ThemeToggle from "../components/ThemeToggle";
+import { FileIcon } from "../components/FileIcon";
 
 type Crumb = { id: string; name: string; locked: boolean };
 type SubFolder = {
@@ -61,15 +88,6 @@ function formatBytes(n: number) {
   let v = n / 1024, i = 0;
   while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
   return `${v.toFixed(1)} ${units[i]}`;
-}
-
-function iconFor(mime: string) {
-  if (mime.startsWith("image/")) return "🖼";
-  if (mime.startsWith("video/")) return "🎞";
-  if (mime.startsWith("audio/")) return "🎵";
-  if (mime === "application/pdf") return "📄";
-  if (mime.includes("zip") || mime.includes("archive")) return "🗜";
-  return "📦";
 }
 
 function FolderTreeNode({
@@ -135,13 +153,17 @@ function FolderTreeNode({
           }`}
           disabled={children.length === 0}
         >
-          {expanded ? "▾" : "▸"}
+          {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
         </button>
         <button
           onClick={() => onSelect(node)}
           className="flex-1 text-left py-1.5 flex items-center gap-2 truncate text-sm"
         >
-          <span>{node.locked ? "🔒" : "📁"}</span>
+          {node.locked ? (
+            <Lock className="w-4 h-4 text-brass shrink-0" />
+          ) : (
+            <Folder className="w-4 h-4 text-teal shrink-0" />
+          )}
           <span className="truncate">{node.name}</span>
         </button>
       </div>
@@ -1261,7 +1283,7 @@ export default function Browser() {
             }`}
           >
             <div className="flex items-center gap-2">
-              <span>🗑️</span>
+              <Trash2 className="w-4 h-4 shrink-0" />
               <span>Trash</span>
             </div>
             {trashCount > 0 && (
@@ -1284,19 +1306,22 @@ export default function Browser() {
             }
             className="text-left px-2 py-2 rounded text-sm text-dim hover:text-paper hover:bg-surface flex items-center gap-2 mt-2"
           >
-            🔗 Share this folder
+            <Share2 className="w-4 h-4 text-teal shrink-0" />
+            <span>Share this folder</span>
           </button>
         )}
 
         {current && !current.locked && (
           <button onClick={() => setShowLockSetup(true)} className="text-left px-2 py-2 rounded text-sm text-brass hover:bg-surface flex items-center gap-2 mt-1">
-            🔒 Lock this folder
+            <Lock className="w-4 h-4 text-brass shrink-0" />
+            <span>Lock this folder</span>
           </button>
         )}
         {current && current.locked && (
           <div className="mt-2">
             <button onClick={() => goToCrumb(Math.max(0, path.length - 2))} className="text-left w-full px-2 py-2 rounded text-sm text-brass hover:bg-surface flex items-center gap-2">
-              🔒 Lock Session (Exit)
+              <Lock className="w-4 h-4 text-brass shrink-0" />
+              <span>Lock Session (Exit)</span>
             </button>
             <button onClick={async () => {
               const pass = passwords[current.id];
@@ -1312,7 +1337,8 @@ export default function Browser() {
                 alert(e.message);
               }
             }} className="text-left w-full px-2 py-2 rounded text-sm text-danger hover:bg-surface flex items-center gap-2 mt-1">
-              🔓 Remove Password
+              <Unlock className="w-4 h-4 text-danger shrink-0" />
+              <span>Remove Password</span>
             </button>
           </div>
         )}
@@ -1335,7 +1361,7 @@ export default function Browser() {
             {/* Header */}
             <div className="flex items-center justify-between pb-3 border-b border-line mb-3">
               <div className="flex items-center gap-2">
-                <span className="text-xl">📁</span>
+                <Folder className="w-5 h-5 text-teal" />
                 <h2 className="font-display text-xl font-bold text-paper">TeleCloud</h2>
               </div>
               <button
@@ -1343,7 +1369,7 @@ export default function Browser() {
                 className="w-8 h-8 rounded-full flex items-center justify-center text-dim hover:text-paper hover:bg-surface2 transition-colors"
                 aria-label="Close menu"
               >
-                ✕
+                <X className="w-4 h-4" />
               </button>
             </div>
 
@@ -1353,18 +1379,22 @@ export default function Browser() {
                 onClick={() => setShowNewMenu((s) => !s)}
                 className="w-full bg-teal text-ink font-medium rounded-lg px-3 py-2.5 text-sm flex items-center gap-2 justify-center shadow-sm"
               >
-                + New
+                <Plus className="w-4 h-4 stroke-[2.5]" />
+                <span>New</span>
               </button>
               {showNewMenu && (
                 <div className="absolute left-0 top-full mt-1 w-full bg-surface2 border border-line rounded-lg shadow-xl z-20 text-sm overflow-hidden animate-in fade-in">
-                  <button onClick={() => { setShowNewMenu(false); setMobileDrawerOpen(false); filePicker.current?.click(); }} className="w-full text-left px-3.5 py-2.5 hover:bg-surface flex items-center gap-2 text-paper">
-                    <span>📄</span> Upload files
+                  <button onClick={() => { setShowNewMenu(false); setMobileDrawerOpen(false); filePicker.current?.click(); }} className="w-full text-left px-3.5 py-2.5 hover:bg-surface flex items-center gap-2.5 text-paper transition-colors">
+                    <Upload className="w-4 h-4 text-teal" />
+                    <span>Upload files</span>
                   </button>
-                  <button onClick={() => { setShowNewMenu(false); setMobileDrawerOpen(false); folderPicker.current?.click(); }} className="w-full text-left px-3.5 py-2.5 hover:bg-surface flex items-center gap-2 text-paper">
-                    <span>📦</span> Upload folder
+                  <button onClick={() => { setShowNewMenu(false); setMobileDrawerOpen(false); folderPicker.current?.click(); }} className="w-full text-left px-3.5 py-2.5 hover:bg-surface flex items-center gap-2.5 text-paper transition-colors">
+                    <FolderUp className="w-4 h-4 text-teal" />
+                    <span>Upload folder</span>
                   </button>
-                  <button onClick={() => { setShowNewMenu(false); setMobileDrawerOpen(false); setShowNewFolder(true); }} className="w-full text-left px-3.5 py-2.5 hover:bg-surface flex items-center gap-2 text-paper">
-                    <span>📁</span> New folder
+                  <button onClick={() => { setShowNewMenu(false); setMobileDrawerOpen(false); setShowNewFolder(true); }} className="w-full text-left px-3.5 py-2.5 hover:bg-surface flex items-center gap-2.5 text-paper transition-colors">
+                    <FolderPlus className="w-4 h-4 text-teal" />
+                    <span>New folder</span>
                   </button>
                 </div>
               )}
@@ -1416,8 +1446,8 @@ export default function Browser() {
                   inTrash ? "bg-surface2 text-paper font-medium" : "text-dim hover:text-paper hover:bg-surface2/60"
                 }`}
               >
-                <div className="flex items-center gap-2">
-                  <span>🗑️</span>
+                <div className="flex items-center gap-2.5">
+                  <Trash2 className="w-4 h-4" />
                   <span>Trash</span>
                 </div>
                 {trashCount > 0 && (
@@ -1441,9 +1471,10 @@ export default function Browser() {
                       locked: current.locked,
                     });
                   }}
-                  className="w-full text-left px-2.5 py-2 rounded-lg text-sm text-dim hover:text-paper hover:bg-surface2/60 flex items-center gap-2"
+                  className="w-full text-left px-2.5 py-2 rounded-lg text-sm text-dim hover:text-paper hover:bg-surface2/60 flex items-center gap-2.5"
                 >
-                  <span>🔗</span> Share this folder
+                  <Share2 className="w-4 h-4 text-teal" />
+                  <span>Share this folder</span>
                 </button>
 
                 {!current.locked ? (
@@ -1452,9 +1483,10 @@ export default function Browser() {
                       setMobileDrawerOpen(false);
                       setShowLockSetup(true);
                     }}
-                    className="w-full text-left px-2.5 py-2 rounded-lg text-sm text-brass hover:bg-surface2/60 flex items-center gap-2"
+                    className="w-full text-left px-2.5 py-2 rounded-lg text-sm text-brass hover:bg-surface2/60 flex items-center gap-2.5"
                   >
-                    <span>🔒</span> Lock this folder
+                    <Lock className="w-4 h-4 text-brass" />
+                    <span>Lock this folder</span>
                   </button>
                 ) : (
                   <>
@@ -1463,9 +1495,10 @@ export default function Browser() {
                         setMobileDrawerOpen(false);
                         goToCrumb(Math.max(0, path.length - 2));
                       }}
-                      className="w-full text-left px-2.5 py-2 rounded-lg text-sm text-brass hover:bg-surface2/60 flex items-center gap-2"
+                      className="w-full text-left px-2.5 py-2 rounded-lg text-sm text-brass hover:bg-surface2/60 flex items-center gap-2.5"
                     >
-                      <span>🔒</span> Lock Session (Exit)
+                      <Lock className="w-4 h-4 text-brass" />
+                      <span>Lock Session (Exit)</span>
                     </button>
                     <button
                       onClick={async () => {
@@ -1483,9 +1516,10 @@ export default function Browser() {
                           alert(e.message);
                         }
                       }}
-                      className="w-full text-left px-2.5 py-2 rounded-lg text-sm text-danger hover:bg-surface2/60 flex items-center gap-2"
+                      className="w-full text-left px-2.5 py-2 rounded-lg text-sm text-danger hover:bg-surface2/60 flex items-center gap-2.5"
                     >
-                      <span>🔓</span> Remove Password
+                      <Unlock className="w-4 h-4 text-danger" />
+                      <span>Remove Password</span>
                     </button>
                   </>
                 )}
@@ -1499,7 +1533,8 @@ export default function Browser() {
                 onClick={logout}
                 className="text-xs text-dim hover:text-danger px-3 py-1.5 rounded hover:bg-surface2 transition-colors flex items-center gap-1.5"
               >
-                <span>🚪</span> Sign out
+                <LogOut className="w-4 h-4" />
+                <span>Sign out</span>
               </button>
             </div>
           </aside>
@@ -1565,7 +1600,7 @@ export default function Browser() {
                   {trashItems.length}
                 </span>
               ) : current?.locked ? (
-                <span className="text-xs text-brass shrink-0">🔒</span>
+                <Lock className="w-3.5 h-3.5 text-brass shrink-0" />
               ) : null}
             </div>
           </div>
@@ -1575,10 +1610,10 @@ export default function Browser() {
               <button
                 onClick={handleSyncTelegram}
                 disabled={syncing}
-                className="w-8 h-8 rounded-full border border-line bg-surface hover:bg-surface2 flex items-center justify-center text-xs transition-colors disabled:opacity-50"
+                className="w-8 h-8 rounded-full border border-line bg-surface hover:bg-surface2 flex items-center justify-center text-xs transition-colors disabled:opacity-50 text-paper"
                 title="Sync Telegram files"
               >
-                <span className={syncing ? "animate-spin inline-block" : ""}>🔄</span>
+                <RefreshCw className={`w-3.5 h-3.5 ${syncing ? "animate-spin" : ""}`} />
               </button>
             )}
             {!inTrash && (
@@ -1587,7 +1622,7 @@ export default function Browser() {
                 className="w-8 h-8 rounded-full border border-line bg-surface hover:bg-surface2 flex items-center justify-center text-xs transition-colors text-paper"
                 title={view === "grid" ? "Switch to List View" : "Switch to Grid View"}
               >
-                {view === "grid" ? "☰" : "⊞"}
+                {view === "grid" ? <List className="w-3.5 h-3.5" /> : <LayoutGrid className="w-3.5 h-3.5" />}
               </button>
             )}
             <ThemeToggle compact />
@@ -1611,7 +1646,7 @@ export default function Browser() {
                 </svg>
                 <span>Back to Files</span>
               </button>
-              <span className="text-2xl hidden sm:inline">🗑️</span>
+              <Trash2 className="w-6 h-6 text-danger hidden sm:inline" />
               <div>
                 <h2 className="text-paper font-medium text-base">Trash Bin</h2>
                 <p className="text-dim text-xs">
@@ -1624,7 +1659,8 @@ export default function Browser() {
                 onClick={emptyTrash}
                 className="text-xs bg-danger/10 hover:bg-danger/20 text-danger border border-danger/30 px-3 py-1.5 rounded transition-colors flex items-center gap-1.5 font-medium"
               >
-                <span>🗑️</span> Empty Trash
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Empty Trash</span>
               </button>
             )}
           </div>
@@ -1649,7 +1685,7 @@ export default function Browser() {
                     className="absolute right-2.5 text-xs text-dim hover:text-paper"
                     title="Clear search"
                   >
-                    ✕
+                    <X className="w-3.5 h-3.5" />
                   </button>
                 )}
               </div>
@@ -1657,22 +1693,22 @@ export default function Browser() {
               <div className="flex border border-line rounded overflow-hidden text-xs shrink-0">
                 <button
                   onClick={() => setSearchScope("current")}
-                  className={`px-2 sm:px-2.5 py-1.5 flex items-center gap-1 transition-colors ${
+                  className={`px-2 sm:px-2.5 py-1.5 flex items-center gap-1.5 transition-colors ${
                     searchScope === "current" ? "bg-surface2 text-paper font-medium" : "text-dim hover:text-paper"
                   }`}
                   title="Search only within this folder"
                 >
-                  <span>📁</span>
+                  <Folder className="w-3.5 h-3.5" />
                   <span className="hidden sm:inline">This folder</span>
                 </button>
                 <button
                   onClick={() => setSearchScope("global")}
-                  className={`px-2 sm:px-2.5 py-1.5 flex items-center gap-1 transition-colors ${
+                  className={`px-2 sm:px-2.5 py-1.5 flex items-center gap-1.5 transition-colors ${
                     searchScope === "global" ? "bg-surface2 text-teal font-medium" : "text-dim hover:text-paper"
                   }`}
                   title="Search across all files and folders"
                 >
-                  <span>🌐</span>
+                  <Globe className="w-3.5 h-3.5" />
                   <span className="hidden sm:inline">All files</span>
                 </button>
               </div>
@@ -1703,7 +1739,7 @@ export default function Browser() {
                 className="hidden sm:flex px-2.5 py-1.5 border border-line bg-surface hover:bg-surface2 text-paper text-xs rounded items-center gap-1.5 transition-colors disabled:opacity-50 shrink-0"
                 title="Scan and sync files uploaded from Telegram mobile app"
               >
-                <span className={syncing ? "animate-spin inline-block" : ""}>🔄</span>
+                <RefreshCw className={`w-3.5 h-3.5 ${syncing ? "animate-spin" : ""}`} />
                 <span className="hidden md:inline">{syncing ? "Syncing..." : "Sync Telegram"}</span>
               </button>
 
@@ -1743,10 +1779,10 @@ export default function Browser() {
                     </button>
                     <button
                       onClick={() => goToCrumb(0)}
-                      className="p-1 text-dim hover:text-paper hover:bg-surface2 rounded-md transition-colors text-xs"
+                      className="p-1 text-dim hover:text-paper hover:bg-surface2 rounded-md transition-colors text-xs flex items-center justify-center"
                       title="Jump to Home / Root folder"
                     >
-                      <span>🏠</span>
+                      <Home className="w-3.5 h-3.5" />
                     </button>
                     <span className="text-line mx-0.5">/</span>
                   </div>
@@ -1759,10 +1795,10 @@ export default function Browser() {
                       onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDropTargetId(c.id); }}
                       onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setDropTargetId(null); }}
                       onDrop={(e) => handleFolderDrop(e, c as SubFolder)}
-                      className={`${i === path.length - 1 ? "text-paper font-medium" : "text-dim hover:text-paper"} ${dropTargetId === c.id ? "bg-teal/20 px-1 rounded" : ""}`}
+                      className={`${i === path.length - 1 ? "text-paper font-medium" : "text-dim hover:text-paper"} ${dropTargetId === c.id ? "bg-teal/20 px-1 rounded" : ""} flex items-center gap-1`}
                     >
-                      {c.locked && <span className="text-brass mr-1">🔒</span>}
-                      {c.name}
+                      {c.locked && <Lock className="w-3 h-3 text-brass inline" />}
+                      <span>{c.name}</span>
                     </button>
                   </span>
                 ))}
@@ -1778,7 +1814,7 @@ export default function Browser() {
               <div className="px-6 py-2.5 bg-surface2/60 border-b border-line flex items-center justify-between text-xs animate-in fade-in">
                 <div className="flex items-center gap-2">
                   <span className="text-teal font-medium flex items-center gap-1.5">
-                    <span>🌐</span>
+                    <Globe className="w-3.5 h-3.5" />
                     {isSearching
                       ? "Searching across all folders..."
                       : `Found ${sortedFolders.length + sortedFiles.length} ${sortedFolders.length + sortedFiles.length === 1 ? "result" : "results"} for "${query}" across all folders`}
@@ -1788,7 +1824,8 @@ export default function Browser() {
                   onClick={() => { setQuery(""); setSearchScope("current"); }}
                   className="text-dim hover:text-paper text-xs flex items-center gap-1 hover:underline cursor-pointer"
                 >
-                  ✕ Clear search
+                  <X className="w-3.5 h-3.5" />
+                  <span>Clear search</span>
                 </button>
               </div>
             )}
@@ -1803,7 +1840,7 @@ export default function Browser() {
         {inTrash ? (
           trashItems.length === 0 ? (
             <div className="text-dim text-sm py-20 text-center flex flex-col items-center justify-center">
-              <span className="text-4xl mb-3">🗑️</span>
+              <Trash2 className="w-12 h-12 text-dim/50 mb-3" />
               <p className="text-paper font-medium mb-1">Trash is empty</p>
               <p className="text-xs text-dim">Deleted files and folders will appear here until restored or permanently deleted.</p>
             </div>
@@ -1871,14 +1908,19 @@ export default function Browser() {
                           </td>
                           <td className="py-3 px-4">
                             <div className="flex items-center gap-2">
-                              <span className="text-lg">
-                                {item.type === "folder" ? (item.locked ? "🔒" : "📁") : "📄"}
-                              </span>
+                              {item.type === "folder" ? (
+                                item.locked ? <Lock className="w-4 h-4 text-brass shrink-0" /> : <Folder className="w-4 h-4 text-teal shrink-0" />
+                              ) : (
+                                <FileText className="w-4 h-4 text-dim shrink-0" />
+                              )}
                               <span className="font-medium text-paper">{item.name}</span>
                             </div>
                           </td>
                           <td className="py-3 px-4 text-dim text-xs">
-                            📁 {item.originalFolderName || "My Files"}
+                            <span className="inline-flex items-center gap-1">
+                              <Folder className="w-3.5 h-3.5 text-dim inline" />
+                              <span>{item.originalFolderName || "My Files"}</span>
+                            </span>
                           </td>
                           <td className="py-3 px-4 text-dim text-xs">
                             {new Date(item.deletedAt).toLocaleDateString()} {new Date(item.deletedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -1890,17 +1932,19 @@ export default function Browser() {
                             <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
                               <button
                                 onClick={() => restoreTrashItems([item.id])}
-                                className="px-2.5 py-1 rounded text-xs bg-surface2 hover:bg-teal/20 text-dim hover:text-teal border border-line hover:border-teal/50 transition-colors flex items-center gap-1"
+                                className="px-2.5 py-1 rounded text-xs bg-surface2 hover:bg-teal/20 text-dim hover:text-teal border border-line hover:border-teal/50 transition-colors flex items-center gap-1.5"
                                 title="Restore item"
                               >
-                                <span>↩️</span> Restore
+                                <Undo2 className="w-3.5 h-3.5" />
+                                <span>Restore</span>
                               </button>
                               <button
                                 onClick={() => deleteTrashPermanent(item.id)}
-                                className="px-2.5 py-1 rounded text-xs bg-surface2 hover:bg-danger/20 text-dim hover:text-danger border border-line hover:border-danger/50 transition-colors flex items-center gap-1"
+                                className="px-2.5 py-1 rounded text-xs bg-surface2 hover:bg-danger/20 text-dim hover:text-danger border border-line hover:border-danger/50 transition-colors flex items-center gap-1.5"
                                 title="Delete forever"
                               >
-                                <span>🗑️</span> Delete Forever
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span>Delete Forever</span>
                               </button>
                             </div>
                           </td>
@@ -1945,13 +1989,18 @@ export default function Browser() {
                           onClick={(e) => e.stopPropagation()}
                           className="accent-teal cursor-pointer shrink-0 mt-1"
                         />
-                        <span className="text-xl shrink-0">
-                          {item.type === "folder" ? (item.locked ? "🔒" : "📁") : "📄"}
+                        <span className="shrink-0 mt-0.5">
+                          {item.type === "folder" ? (
+                            item.locked ? <Lock className="w-4 h-4 text-brass" /> : <Folder className="w-4 h-4 text-teal" />
+                          ) : (
+                            <FileText className="w-4 h-4 text-dim" />
+                          )}
                         </span>
                         <div className="min-w-0 flex-1">
                           <p className="text-sm font-medium text-paper truncate">{item.name}</p>
-                          <p className="text-xs text-dim mt-0.5 truncate">
-                            📁 {item.originalFolderName || "My Files"} &bull; {item.type === "folder" ? `${item.itemCount || 0} items` : formatBytes(item.size || 0)}
+                          <p className="text-xs text-dim mt-0.5 truncate flex items-center gap-1">
+                            <Folder className="w-3 h-3 text-dim inline shrink-0" />
+                            <span>{item.originalFolderName || "My Files"} &bull; {item.type === "folder" ? `${item.itemCount || 0} items` : formatBytes(item.size || 0)}</span>
                           </p>
                           <p className="text-[11px] text-dim mt-0.5">
                             Deleted {new Date(item.deletedAt).toLocaleDateString()}
@@ -1961,15 +2010,17 @@ export default function Browser() {
                       <div className="flex items-center justify-end gap-2 mt-3 pt-2.5 border-t border-line/40" onClick={(e) => e.stopPropagation()}>
                         <button
                           onClick={() => restoreTrashItems([item.id])}
-                          className="px-3 py-1.5 rounded-lg text-xs bg-surface2 hover:bg-teal/20 text-dim hover:text-teal border border-line flex items-center gap-1 transition-colors"
+                          className="px-3 py-1.5 rounded-lg text-xs bg-surface2 hover:bg-teal/20 text-dim hover:text-teal border border-line flex items-center gap-1.5 transition-colors"
                         >
-                          <span>↩️</span> Restore
+                          <Undo2 className="w-3.5 h-3.5" />
+                          <span>Restore</span>
                         </button>
                         <button
                           onClick={() => deleteTrashPermanent(item.id)}
-                          className="px-3 py-1.5 rounded-lg text-xs bg-surface2 hover:bg-danger/20 text-dim hover:text-danger border border-line flex items-center gap-1 transition-colors"
+                          className="px-3 py-1.5 rounded-lg text-xs bg-surface2 hover:bg-danger/20 text-dim hover:text-danger border border-line flex items-center gap-1.5 transition-colors"
                         >
-                          <span>🗑️</span> Delete Forever
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Delete Forever</span>
                         </button>
                       </div>
                     </div>
@@ -2020,13 +2071,15 @@ export default function Browser() {
                 >
                   <button
                     onClick={(e) => handleItemMenu(e, { kind: "folder", id: f.id, name: f.name, locked: f.locked }, true)}
-                    className="absolute top-1.5 right-1.5 w-7 h-7 sm:w-6 sm:h-6 rounded flex items-center justify-center text-dim hover:text-paper hover:bg-surface2/80 transition-all opacity-85 group-hover:opacity-100 z-10 text-sm focus:outline-none"
+                    className="absolute top-1.5 right-1.5 w-7 h-7 sm:w-6 sm:h-6 rounded flex items-center justify-center text-dim hover:text-paper hover:bg-surface2/80 transition-all opacity-85 group-hover:opacity-100 z-10 focus:outline-none"
                     title="Options"
                     aria-label="Options"
                   >
-                    ⋮
+                    <MoreVertical className="w-4 h-4" />
                   </button>
-                  <div className="text-2xl mb-2">{f.locked ? "🔒" : "📁"}</div>
+                  <div className="mb-2">
+                    <FileIcon isFolder locked={f.locked} className="w-8 h-8" />
+                  </div>
                   <div className="text-xs font-medium truncate w-full pr-6">{f.name}</div>
                   <div className="text-[10px] text-dim mt-0.5">
                     {f.itemCount !== undefined ? `${f.itemCount} ${f.itemCount === 1 ? "item" : "items"}` : ""}
@@ -2057,15 +2110,15 @@ export default function Browser() {
                 >
                   <button
                     onClick={(e) => handleItemMenu(e, { kind: "file", id: f.id, name: f.name }, true)}
-                    className="absolute top-1.5 right-1.5 w-7 h-7 sm:w-6 sm:h-6 rounded flex items-center justify-center text-dim hover:text-paper bg-surface/85 hover:bg-surface2 backdrop-blur-xs transition-all opacity-85 group-hover:opacity-100 z-10 text-sm shadow-xs focus:outline-none"
+                    className="absolute top-1.5 right-1.5 w-7 h-7 sm:w-6 sm:h-6 rounded flex items-center justify-center text-dim hover:text-paper bg-surface/85 hover:bg-surface2 backdrop-blur-xs transition-all opacity-85 group-hover:opacity-100 z-10 shadow-xs focus:outline-none"
                     title="Options"
                     aria-label="Options"
                   >
-                    ⋮
+                    <MoreVertical className="w-4 h-4" />
                   </button>
                   <button onClick={(e) => { if (!handleItemClick(e, f.id)) setPreview(f); }} className="text-left flex flex-col flex-1">
-                    <div className="h-24 bg-surface2 flex items-center justify-center text-2xl overflow-hidden relative">
-                      <span className="select-none pointer-events-none">{iconFor(f.mimeType)}</span>
+                    <div className="h-24 bg-surface2 flex items-center justify-center overflow-hidden relative">
+                      <FileIcon mime={f.mimeType} className="w-9 h-9 pointer-events-none" />
                       {(f.mimeType.startsWith("image/") || f.mimeType.startsWith("video/")) && (
                         <div className="absolute inset-0 z-10">
                           <Thumbnail fileId={f.id} mimeType={f.mimeType} password={current ? passwords[current.id] : undefined} />
@@ -2127,7 +2180,7 @@ export default function Browser() {
                   onContextMenu={(e) => handleItemContextMenu(e, { kind: "folder", id: f.id, name: f.name, locked: f.locked })}
                 >
                   <div className="flex items-center gap-2.5 sm:gap-3 text-left flex-1 min-w-0">
-                    <span>{f.locked ? "🔒" : "📁"}</span>
+                    <FileIcon isFolder locked={f.locked} className="w-5 h-5 shrink-0" />
                     <div className="flex flex-col min-w-0">
                       <span className="text-sm truncate">{f.name}</span>
                       {f.path && f.path.length > 0 && (
@@ -2151,11 +2204,11 @@ export default function Browser() {
                     </span>
                     <button
                       onClick={(e) => handleItemMenu(e, { kind: "folder", id: f.id, name: f.name, locked: f.locked }, true)}
-                      className="w-7 h-7 sm:w-6 sm:h-6 rounded flex items-center justify-center text-dim hover:text-paper hover:bg-surface2 transition-all opacity-85 group-hover:opacity-100 shrink-0 text-sm focus:outline-none"
+                      className="w-7 h-7 sm:w-6 sm:h-6 rounded flex items-center justify-center text-dim hover:text-paper hover:bg-surface2 transition-all opacity-85 group-hover:opacity-100 shrink-0 focus:outline-none"
                       title="Options"
                       aria-label="Options"
                     >
-                      ⋮
+                      <MoreVertical className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
@@ -2170,7 +2223,7 @@ export default function Browser() {
                   onContextMenu={(e) => handleItemContextMenu(e, { kind: "file", id: f.id, name: f.name })}
                 >
                   <button onClick={(e) => { if (!handleItemClick(e, f.id)) setPreview(f); }} className="flex items-center gap-2.5 sm:gap-3 text-left flex-1 min-w-0">
-                    <span>{iconFor(f.mimeType)}</span>
+                    <FileIcon mime={f.mimeType} className="w-5 h-5 shrink-0" />
                     <div className="flex flex-col min-w-0">
                       <span className="truncate text-sm">{f.name}</span>
                       {f.path && f.path.length > 0 && (
@@ -2192,11 +2245,11 @@ export default function Browser() {
                     <span className="text-dim text-xs w-16 sm:w-20 text-right">{formatBytes(f.size)}</span>
                     <button
                       onClick={(e) => handleItemMenu(e, { kind: "file", id: f.id, name: f.name }, true)}
-                      className="w-7 h-7 sm:w-6 sm:h-6 rounded flex items-center justify-center text-dim hover:text-paper hover:bg-surface2 transition-all opacity-85 group-hover:opacity-100 text-sm shrink-0 focus:outline-none"
+                      className="w-7 h-7 sm:w-6 sm:h-6 rounded flex items-center justify-center text-dim hover:text-paper hover:bg-surface2 transition-all opacity-85 group-hover:opacity-100 shrink-0 focus:outline-none"
                       title="Options"
                       aria-label="Options"
                     >
-                      ⋮
+                      <MoreVertical className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
@@ -2339,7 +2392,8 @@ export default function Browser() {
                 }}
                 className="w-full text-left px-3.5 py-2.5 rounded-lg hover:bg-surface flex items-center gap-2.5 text-paper transition-colors"
               >
-                <span className="text-base">📄</span> Upload files
+                <Upload className="w-4 h-4 text-teal" />
+                <span>Upload files</span>
               </button>
               <button
                 onClick={() => {
@@ -2348,7 +2402,8 @@ export default function Browser() {
                 }}
                 className="w-full text-left px-3.5 py-2.5 rounded-lg hover:bg-surface flex items-center gap-2.5 text-paper transition-colors"
               >
-                <span className="text-base">📁</span> New folder
+                <FolderPlus className="w-4 h-4 text-teal" />
+                <span>New folder</span>
               </button>
               <button
                 onClick={() => {
@@ -2357,7 +2412,8 @@ export default function Browser() {
                 }}
                 className="w-full text-left px-3.5 py-2.5 rounded-lg hover:bg-surface flex items-center gap-2.5 text-paper transition-colors"
               >
-                <span className="text-base">📦</span> Upload folder
+                <FolderUp className="w-4 h-4 text-teal" />
+                <span>Upload folder</span>
               </button>
             </div>
           )}
@@ -2384,14 +2440,16 @@ export default function Browser() {
                 className="text-xs text-teal hover:bg-teal/20 px-2.5 py-1 rounded-full flex items-center gap-1.5 transition-colors font-medium whitespace-nowrap"
                 title="Restore selected items"
               >
-                <span>↩️</span> Restore
+                <Undo2 className="w-3.5 h-3.5" />
+                <span>Restore</span>
               </button>
               <button
                 onClick={() => bulkDeleteTrashPermanent(selectedIds)}
                 className="text-xs text-danger hover:bg-danger/10 px-2.5 py-1 rounded-full flex items-center gap-1.5 transition-colors font-medium whitespace-nowrap"
                 title="Delete selected items permanently"
               >
-                <span>🗑️</span> Delete Forever
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete Forever</span>
               </button>
             </>
           ) : (
@@ -2401,21 +2459,24 @@ export default function Browser() {
                 className="text-xs text-dim hover:text-paper hover:bg-surface2 px-2.5 py-1 rounded-full flex items-center gap-1.5 transition-colors whitespace-nowrap"
                 title="Move selected items"
               >
-                <span>📦</span> Move
+                <FolderInput className="w-3.5 h-3.5" />
+                <span>Move</span>
               </button>
               <button
                 onClick={() => bulkDownload(selectedIds)}
                 className="text-xs text-dim hover:text-paper hover:bg-surface2 px-2.5 py-1 rounded-full flex items-center gap-1.5 transition-colors whitespace-nowrap"
                 title="Download selected items"
               >
-                <span>⬇️</span> Download
+                <Download className="w-3.5 h-3.5" />
+                <span>Download</span>
               </button>
               <button
                 onClick={() => bulkDelete(selectedIds)}
                 className="text-xs text-danger/80 hover:text-danger hover:bg-danger/10 px-2.5 py-1 rounded-full flex items-center gap-1.5 transition-colors whitespace-nowrap"
                 title="Delete selected items"
               >
-                <span>🗑</span> Delete
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete</span>
               </button>
             </>
           )}
@@ -2426,7 +2487,7 @@ export default function Browser() {
             title="Clear selection"
             aria-label="Clear selection"
           >
-            ✕
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
       )}

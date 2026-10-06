@@ -1,4 +1,5 @@
 import { useTheme } from "../lib/theme";
+import { Sun, Moon } from "lucide-react";
 
 interface Props {
   compact?: boolean;
@@ -21,9 +22,11 @@ export default function ThemeToggle({ compact, className = "" }: Props) {
           : "w-full px-2.5 py-1.5 text-xs text-dim hover:text-paper bg-surface hover:bg-surface2 rounded gap-2 border border-line"
       } ${className}`}
     >
-      <span className="text-sm leading-none" role="img" aria-hidden="true">
-        {isDark ? "☀️" : "🌙"}
-      </span>
+      {isDark ? (
+        <Sun className="w-4 h-4 text-amber-400 shrink-0" />
+      ) : (
+        <Moon className="w-4 h-4 text-indigo-400 shrink-0" />
+      )}
       {!compact && (
         <span className="font-medium">
           {isDark ? "Light mode" : "Dark mode"}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Folder, Lock } from "lucide-react";
 import { api } from "../lib/api";
 
 interface Crumb { id: string; name: string }
@@ -76,7 +77,11 @@ export default function MoveDialog({
               onClick={() => open(f.id, f.name, path)}
               className="w-full flex items-center gap-2 px-3 py-2 rounded hover:bg-surface2 text-left text-sm"
             >
-              <span>{f.locked ? "🔒" : "📁"}</span>
+              {f.locked ? (
+                <Lock className="w-4 h-4 text-brass shrink-0" />
+              ) : (
+                <Folder className="w-4 h-4 text-teal shrink-0" />
+              )}
               <span className="truncate">{f.name}</span>
             </button>
           ))}
