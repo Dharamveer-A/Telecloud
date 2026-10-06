@@ -39,7 +39,9 @@ const activeClients = new Map<string, TelegramClient>();
 function newClient(session = ""): TelegramClient {
   const { apiId, apiHash } = getApiCredentials();
   return new TelegramClient(new StringSession(session), apiId, apiHash, {
-    connectionRetries: 5,
+    connectionRetries: 10,
+    autoReconnect: true,
+    timeout: 30,
   });
 }
 
