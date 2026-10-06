@@ -20,13 +20,19 @@ export default function GlobalContextMenu({ menu, onClose }: { menu: ContextMenu
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
     }
+    let isReady = false;
+    const t = setTimeout(() => {
+      isReady = true;
+    }, 150);
+
     function onScroll() {
-      onClose();
+      if (isReady) onClose();
     }
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", onScroll);
     return () => {
+      clearTimeout(t);
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", onScroll);
@@ -46,7 +52,11 @@ export default function GlobalContextMenu({ menu, onClose }: { menu: ContextMenu
   return (
     <>
       <div
-        className="fixed inset-0 z-50 bg-transparent select-none"
+        className="fixed inset-0 z-40 bg-transparent select-none"
+        onPointerDown={(e) => {
+          e.stopPropagation();
+          onClose();
+        }}
         onClick={(e) => {
           e.stopPropagation();
           onClose();
@@ -62,6 +72,8 @@ export default function GlobalContextMenu({ menu, onClose }: { menu: ContextMenu
         style={{ left: x, top: y, width: MENU_WIDTH }}
         className="fixed w-[160px] bg-surface2 border border-line rounded-lg shadow-2xl z-50 text-xs sm:text-sm py-1 overflow-hidden"
         onContextMenu={(e) => e.preventDefault()}
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
       >
         {menu.actions.map((a, i) => (
           <button

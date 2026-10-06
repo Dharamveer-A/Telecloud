@@ -45,6 +45,7 @@ import TransfersTopButton from "../components/TransfersTopButton";
 import ShareModal, { ShareTargetItem } from "../components/ShareModal";
 import ThemeToggle from "../components/ThemeToggle";
 import { FileIcon } from "../components/FileIcon";
+import Logo from "../components/Logo";
 
 type Crumb = { id: string; name: string; locked: boolean };
 type SubFolder = {
@@ -1293,7 +1294,9 @@ export default function Browser() {
     <div className="h-screen h-[100dvh] flex relative overflow-hidden">
       {/* Sidebar */}
       <aside className="w-60 shrink-0 border-r border-line px-4 py-5 hidden sm:flex flex-col gap-1 h-full overflow-hidden">
-        <h1 className="font-display text-2xl mb-6 px-2">TeleCloud</h1>
+        <div className="mb-6 px-2">
+          <Logo withText className="w-7 h-7" textClassName="font-display text-2xl font-bold tracking-tight text-paper" />
+        </div>
 
         <div className="relative mb-4" ref={newMenuRef}>
           <button
@@ -1431,10 +1434,7 @@ export default function Browser() {
           <aside className="fixed inset-y-0 left-0 w-72 max-w-[85vw] bg-surface border-r border-line shadow-2xl z-50 flex flex-col p-4 animate-in slide-in-from-left duration-200">
             {/* Header */}
             <div className="flex items-center justify-between pb-3 border-b border-line mb-3">
-              <div className="flex items-center gap-2">
-                <Folder className="w-5 h-5 text-teal" />
-                <h2 className="font-display text-xl font-bold text-paper">TeleCloud</h2>
-              </div>
+              <Logo withText className="w-6 h-6" textClassName="font-display text-xl font-bold text-paper" />
               <button
                 onClick={() => setMobileDrawerOpen(false)}
                 className="w-8 h-8 rounded-full flex items-center justify-center text-dim hover:text-paper hover:bg-surface2 transition-colors"
@@ -1663,9 +1663,13 @@ export default function Browser() {
               </button>
             )}
             <div className="flex items-center gap-1.5 truncate">
-              <span className="font-display font-semibold text-lg text-paper tracking-tight truncate">
-                {inTrash ? "Trash Bin" : path.length > 1 ? current?.name : "TeleCloud"}
-              </span>
+              {inTrash ? (
+                <span className="font-display font-semibold text-lg text-paper tracking-tight truncate">Trash Bin</span>
+              ) : path.length > 1 ? (
+                <span className="font-display font-semibold text-lg text-paper tracking-tight truncate">{current?.name}</span>
+              ) : (
+                <Logo withText className="w-5 h-5" textClassName="font-display font-semibold text-lg text-paper tracking-tight" />
+              )}
               {inTrash ? (
                 <span className="text-[11px] bg-danger/15 text-danger border border-danger/30 px-1.5 py-0.5 rounded font-mono font-medium shrink-0">
                   {trashItems.length}
@@ -2194,8 +2198,15 @@ export default function Browser() {
                   onContextMenu={(e) => handleItemContextMenu(e, { kind: "folder", id: f.id, name: f.name, locked: f.locked })}
                 >
                   <button
-                    onClick={(e) => handleItemMenu(e, { kind: "folder", id: f.id, name: f.name, locked: f.locked }, true)}
-                    className="absolute top-1.5 right-1.5 w-7 h-7 sm:w-6 sm:h-6 rounded flex items-center justify-center text-dim hover:text-paper hover:bg-surface2/80 transition-all opacity-85 group-hover:opacity-100 z-10 focus:outline-none"
+                    draggable={false}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleItemMenu(e, { kind: "folder", id: f.id, name: f.name, locked: f.locked }, true);
+                    }}
+                    className="absolute top-1.5 right-1.5 w-7 h-7 sm:w-6 sm:h-6 rounded flex items-center justify-center text-dim hover:text-paper hover:bg-surface2/80 transition-all opacity-85 group-hover:opacity-100 z-30 focus:outline-none cursor-pointer"
                     title="Options"
                     aria-label="Options"
                   >
@@ -2232,14 +2243,6 @@ export default function Browser() {
                   className={`selectable-item border rounded-lg overflow-hidden flex flex-col relative group ${selectedIds.has(f.id) ? "bg-teal/20 border-teal ring-1 ring-teal" : "border-line bg-surface hover:border-teal"}`}
                   onContextMenu={(e) => handleItemContextMenu(e, { kind: "file", id: f.id, name: f.name })}
                 >
-                  <button
-                    onClick={(e) => handleItemMenu(e, { kind: "file", id: f.id, name: f.name }, true)}
-                    className="absolute top-1.5 right-1.5 w-7 h-7 sm:w-6 sm:h-6 rounded flex items-center justify-center text-dim hover:text-paper bg-surface/85 hover:bg-surface2 backdrop-blur-xs transition-all opacity-85 group-hover:opacity-100 z-10 shadow-xs focus:outline-none"
-                    title="Options"
-                    aria-label="Options"
-                  >
-                    <MoreVertical className="w-4 h-4" />
-                  </button>
                   <button onClick={(e) => { if (!handleItemClick(e, f.id)) setPreview(f); }} className="text-left flex flex-col flex-1">
                     <div className="h-24 bg-surface2 flex items-center justify-center overflow-hidden relative">
                       <FileIcon mime={f.mimeType} className="w-9 h-9 pointer-events-none" />
@@ -2250,7 +2253,7 @@ export default function Browser() {
                       )}
                     </div>
                     <div className="px-2 py-2">
-                      <div className="text-xs truncate pr-4">{f.name}</div>
+                      <div className="text-xs truncate pr-6">{f.name}</div>
                       <div className="text-[10px] text-dim mt-0.5">{formatBytes(f.size)}</div>
                       {f.path && f.path.length > 0 && (
                         <button
@@ -2266,6 +2269,21 @@ export default function Browser() {
                         </button>
                       )}
                     </div>
+                  </button>
+                  <button
+                    draggable={false}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleItemMenu(e, { kind: "file", id: f.id, name: f.name }, true);
+                    }}
+                    className="absolute top-1.5 right-1.5 w-7 h-7 sm:w-6 sm:h-6 rounded flex items-center justify-center text-dim hover:text-paper bg-surface/90 hover:bg-surface2 backdrop-blur-xs transition-all opacity-85 group-hover:opacity-100 z-30 shadow-xs focus:outline-none cursor-pointer"
+                    title="Options"
+                    aria-label="Options"
+                  >
+                    <MoreVertical className="w-4 h-4" />
                   </button>
                 </div>
               ))}
@@ -2335,8 +2353,15 @@ export default function Browser() {
                       {f.itemCount !== undefined ? `${f.itemCount} ${f.itemCount === 1 ? "item" : "items"}` : "—"}
                     </span>
                     <button
-                      onClick={(e) => handleItemMenu(e, { kind: "folder", id: f.id, name: f.name, locked: f.locked }, true)}
-                      className="w-7 h-7 sm:w-6 sm:h-6 rounded flex items-center justify-center text-dim hover:text-paper hover:bg-surface2 transition-all opacity-85 group-hover:opacity-100 shrink-0 focus:outline-none"
+                      draggable={false}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleItemMenu(e, { kind: "folder", id: f.id, name: f.name, locked: f.locked }, true);
+                      }}
+                      className="w-7 h-7 sm:w-6 sm:h-6 rounded flex items-center justify-center text-dim hover:text-paper hover:bg-surface2 transition-all opacity-85 group-hover:opacity-100 shrink-0 focus:outline-none cursor-pointer"
                       title="Options"
                       aria-label="Options"
                     >
@@ -2376,8 +2401,15 @@ export default function Browser() {
                   <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
                     <span className="text-dim text-xs w-16 sm:w-20 text-right">{formatBytes(f.size)}</span>
                     <button
-                      onClick={(e) => handleItemMenu(e, { kind: "file", id: f.id, name: f.name }, true)}
-                      className="w-7 h-7 sm:w-6 sm:h-6 rounded flex items-center justify-center text-dim hover:text-paper hover:bg-surface2 transition-all opacity-85 group-hover:opacity-100 shrink-0 focus:outline-none"
+                      draggable={false}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleItemMenu(e, { kind: "file", id: f.id, name: f.name }, true);
+                      }}
+                      className="w-7 h-7 sm:w-6 sm:h-6 rounded flex items-center justify-center text-dim hover:text-paper hover:bg-surface2 transition-all opacity-85 group-hover:opacity-100 shrink-0 focus:outline-none cursor-pointer"
                       title="Options"
                       aria-label="Options"
                     >

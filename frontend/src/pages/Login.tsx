@@ -4,6 +4,7 @@ import { ChevronDown, Globe } from "lucide-react";
 import { api, setToken } from "../lib/api";
 import { COUNTRIES, Country, detectCountry } from "../lib/countries";
 import ThemeToggle from "../components/ThemeToggle";
+import Logo from "../components/Logo";
 
 type Step = "phone" | "code" | "password";
 
@@ -157,9 +158,12 @@ export default function Login() {
         <ThemeToggle compact />
       </div>
       <div className="w-full max-w-sm">
-        <div className="mb-10">
-          <h1 className="font-display text-4xl text-paper mb-2">TeleCloud</h1>
-          <p className="text-dim text-sm leading-relaxed">
+        <div className="mb-10 text-center flex flex-col items-center">
+          <Logo className="w-14 h-14 mb-3 drop-shadow-lg" />
+          <h1 className="font-display text-4xl text-paper mb-2 font-bold tracking-tight">
+            <span>Tele</span><span className="text-teal">Cloud</span>
+          </h1>
+          <p className="text-dim text-sm leading-relaxed max-w-xs">
             A private archive built on your own Telegram account. Sign in with your phone number to continue.
           </p>
         </div>

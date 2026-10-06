@@ -21,6 +21,7 @@ import {
 import { api, saveBlob, TransferProgress } from "../lib/api";
 import ThemeToggle from "../components/ThemeToggle";
 import { FileIcon } from "../components/FileIcon";
+import Logo from "../components/Logo";
 
 function formatBytes(n: number) {
   if (!n || n < 1024) return `${n || 0} B`;
@@ -260,10 +261,7 @@ interface DownloadProgressState extends TransferProgress {
       {/* Top Header */}
       <header className="border-b border-line bg-surface/50 backdrop-blur sticky top-0 z-30 px-6 py-3.5 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
-          <Cloud className="w-5 h-5 text-teal shrink-0" />
-          <span className="font-display font-bold tracking-tight text-paper text-lg">
-            TeleCloud
-          </span>
+          <Logo withText className="w-6 h-6" textClassName="font-display font-bold tracking-tight text-paper text-lg" />
           <span className="text-xs bg-teal/10 text-teal border border-teal/20 px-2 py-0.5 rounded-full font-medium ml-1">
             Shared Link
           </span>
