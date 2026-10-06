@@ -169,18 +169,10 @@ export function useSelection(options?: UseSelectionOptions | ContainerRef) {
     }
 
     if (speedY !== 0 || speedX !== 0) {
-      let scrolled = false;
       if (container) {
-        const prevTop = container.scrollTop;
-        const prevLeft = container.scrollLeft;
         if (speedY !== 0) container.scrollTop += speedY;
         if (speedX !== 0) container.scrollLeft += speedX;
-        if (container.scrollTop !== prevTop || container.scrollLeft !== prevLeft) {
-          scrolled = true;
-        }
-      }
-      // If container did not scroll (e.g. page/window is what scrolls), scroll window
-      if (!scrolled) {
+      } else {
         window.scrollBy(speedX, speedY);
       }
 

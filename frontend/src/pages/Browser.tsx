@@ -25,6 +25,9 @@ import {
   MoreVertical,
   ChevronDown,
   ChevronRight,
+  CheckSquare,
+  Square,
+  MinusSquare,
 } from "lucide-react";
 import { api, clearToken, saveBlob, computeFileSHA256 } from "../lib/api";
 import { itemsToTree, filesWithPathsToTree, DroppedNode, flattenFiles } from "../lib/dragDrop";
@@ -201,6 +204,8 @@ export default function Browser() {
   const [error, setError] = useState("");
   const [isLoadingFolder, setIsLoadingFolder] = useState(false);
   const [visibleFileCount, setVisibleFileCount] = useState(80);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const isLoadingMoreRef = useRef(false);
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [showLockSetup, setShowLockSetup] = useState(false);
@@ -244,11 +249,12 @@ export default function Browser() {
       if (e.key === "Escape") {
         setMobileDrawerOpen(false);
         setShowFabMenu(false);
+        setSelectedIds(new Set());
       }
     }
     window.addEventListener("keydown", handleEsc);
     return () => window.removeEventListener("keydown", handleEsc);
-  }, []);
+  }, [setSelectedIds]);
 
   const [dragging, setDragging] = useState(false);
   async function resolveFolderPath(pathParts: string[], cache: Map<string, Promise<string>>, targetFolderId: string): Promise<string> {
@@ -970,6 +976,83 @@ export default function Browser() {
     return sortedFiles.slice(0, visibleFileCount);
   }, [sortedFiles, visibleFileCount]);
 
+  const totalItemsCount = useMemo(() => {
+    return inTrash ? trashItems.length : (sortedFolders.length + sortedFiles.length);
+  }, [inTrash, trashItems.length, sortedFolders.length, sortedFiles.length]);
+
+  const isAllSelected = useMemo(() => {
+    return totalItemsCount > 0 && selectedIds.size >= totalItemsCount;
+  }, [totalItemsCount, selectedIds.size]);
+
+  const isPartiallySelected = useMemo(() => {
+    return selectedIds.size > 0 && !isAllSelected;
+  }, [selectedIds.size, isAllSelected]);
+
+  const handleSelectAll = useCallback(() => {
+    if (inTrash) {
+      setSelectedIds(new Set(trashItems.map((item) => item.id)));
+      return;
+    }
+    const allIds = new Set<string>();
+    sortedFolders.forEach((f) => allIds.add(f.id));
+    sortedFiles.forEach((f) => allIds.add(f.id));
+    if (visibleFileCount < sortedFiles.length) {
+      setVisibleFileCount(sortedFiles.length);
+    }
+    setSelectedIds(allIds);
+  }, [inTrash, trashItems, sortedFolders, sortedFiles, visibleFileCount, setSelectedIds]);
+
+  const toggleSelectAll = useCallback(() => {
+    if (isAllSelected) {
+      setSelectedIds(new Set());
+    } else {
+      handleSelectAll();
+    }
+  }, [isAllSelected, handleSelectAll, setSelectedIds]);
+
+  const loadMoreFiles = useCallback(() => {
+    if (isLoadingMoreRef.current) return;
+    if (visibleFileCount >= sortedFiles.length) return;
+    isLoadingMoreRef.current = true;
+    setVisibleFileCount((prev) => Math.min(sortedFiles.length, prev + 80));
+    setTimeout(() => {
+      isLoadingMoreRef.current = false;
+    }, 100);
+  }, [sortedFiles.length, visibleFileCount]);
+
+  const handleMainScroll = useCallback(() => {
+    const el = mainRef.current;
+    if (!el || sortedFiles.length <= visibleFileCount) return;
+    if (el.scrollHeight - (el.scrollTop + el.clientHeight) < 600) {
+      loadMoreFiles();
+    }
+  }, [sortedFiles.length, visibleFileCount, loadMoreFiles]);
+
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel || sortedFiles.length <= visibleFileCount) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          loadMoreFiles();
+        }
+      },
+      {
+        root: mainRef.current,
+        rootMargin: "600px",
+        threshold: 0,
+      }
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [sortedFiles.length, visibleFileCount, loadMoreFiles]);
+
+  useEffect(() => {
+    setVisibleFileCount(80);
+  }, [query, activeFilter, sortBy]);
+
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
   function handleMainContextMenu(e: React.MouseEvent) {
@@ -979,12 +1062,7 @@ export default function Browser() {
       y: e.clientY,
       actions: [
         { label: "New Folder", onClick: () => setShowNewFolder(true) },
-        { label: "Select All", onClick: () => {
-           const allIds = new Set<string>();
-           sortedFolders.forEach(f => allIds.add(f.id));
-           sortedFiles.forEach(f => allIds.add(f.id));
-           setSelectedIds(allIds);
-        }}
+        { label: isAllSelected ? "Deselect All" : "Select All", onClick: toggleSelectAll }
       ]
     });
   }
@@ -1183,14 +1261,7 @@ export default function Browser() {
         }
       } else if (e.key === "a" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
-        if (inTrash) {
-          setSelectedIds(new Set(trashItems.map(item => item.id)));
-        } else {
-          const allIds = new Set<string>();
-          sortedFolders.forEach(f => allIds.add(f.id));
-          sortedFiles.forEach(f => allIds.add(f.id));
-          setSelectedIds(allIds);
-        }
+        handleSelectAll();
       } else if (e.key === "F2") {
         if (selectedIds.size === 1 && !inTrash) {
           e.preventDefault();
@@ -1211,7 +1282,7 @@ export default function Browser() {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selectedIds, files, subfolders, sortedFolders, sortedFiles, inTrash, trashItems]);
+  }, [selectedIds, files, subfolders, sortedFolders, sortedFiles, inTrash, trashItems, handleSelectAll]);
 
   const combinedItems = useMemo(() => [
     ...filteredFolders.map(f => ({ ...f, _type: 'folder' as const })),
@@ -1606,6 +1677,28 @@ export default function Browser() {
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
+            {!inTrash && totalItemsCount > 0 && (
+              <button
+                onClick={toggleSelectAll}
+                className={`w-8 h-8 rounded-full border border-line flex sm:hidden items-center justify-center text-xs transition-colors shrink-0 ${
+                  isAllSelected
+                    ? "bg-teal/20 text-teal border-teal/40"
+                    : selectedIds.size > 0
+                    ? "bg-surface2 text-teal"
+                    : "bg-surface text-dim hover:text-paper"
+                }`}
+                title={isAllSelected ? "Deselect all (Ctrl+A)" : `Select all ${totalItemsCount} items (Ctrl+A)`}
+                aria-label={isAllSelected ? "Deselect all" : "Select all"}
+              >
+                {isAllSelected ? (
+                  <CheckSquare className="w-3.5 h-3.5 text-teal" />
+                ) : selectedIds.size > 0 ? (
+                  <MinusSquare className="w-3.5 h-3.5 text-teal" />
+                ) : (
+                  <Square className="w-3.5 h-3.5" />
+                )}
+              </button>
+            )}
             {!inTrash && (
               <button
                 onClick={handleSyncTelegram}
@@ -1733,6 +1826,35 @@ export default function Browser() {
                 <button onClick={() => setView("list")} className={`px-2 py-1.5 ${view === "list" ? "bg-surface2 text-paper" : "text-dim"}`}>List</button>
               </div>
 
+              {!inTrash && totalItemsCount > 0 && (
+                <button
+                  onClick={toggleSelectAll}
+                  className={`hidden sm:flex px-2.5 py-1.5 border border-line rounded items-center gap-1.5 text-xs transition-colors shrink-0 ${
+                    isAllSelected
+                      ? "bg-teal/20 text-teal border-teal/40 font-medium"
+                      : selectedIds.size > 0
+                      ? "bg-surface2 text-paper"
+                      : "bg-surface hover:bg-surface2 text-dim hover:text-paper"
+                  }`}
+                  title={
+                    isAllSelected
+                      ? "Deselect all items (Ctrl+A)"
+                      : `Select all ${totalItemsCount} items (Ctrl+A)`
+                  }
+                >
+                  {isAllSelected ? (
+                    <CheckSquare className="w-3.5 h-3.5 text-teal" />
+                  ) : selectedIds.size > 0 ? (
+                    <MinusSquare className="w-3.5 h-3.5 text-teal" />
+                  ) : (
+                    <Square className="w-3.5 h-3.5 text-dim" />
+                  )}
+                  <span className="hidden md:inline">
+                    {isAllSelected ? "Deselect all" : "Select all"}
+                  </span>
+                </button>
+              )}
+
               <button
                 onClick={handleSyncTelegram}
                 disabled={syncing}
@@ -1834,6 +1956,7 @@ export default function Browser() {
 
         <main 
           ref={mainRef}
+          onScroll={handleMainScroll}
           className="flex-1 min-h-0 px-3 sm:px-6 pt-3.5 sm:pt-5 pb-24 sm:pb-6 overflow-y-auto relative select-none"
           onPointerDown={inTrash ? undefined : handlePointerDown}
           onContextMenu={inTrash ? undefined : handleMainContextMenu}
@@ -2151,12 +2274,20 @@ export default function Browser() {
                   <div className="text-xs text-dim">
                     Showing {displayedFiles.length} of {sortedFiles.length} files
                   </div>
-                  <button
-                    onClick={() => setVisibleFileCount((prev) => prev + 80)}
-                    className="px-4 py-1.5 rounded-lg border border-line bg-surface hover:bg-surface2 text-sm font-medium text-paper transition-colors shadow-xs"
-                  >
-                    Load more files ({sortedFiles.length - displayedFiles.length} remaining)
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setVisibleFileCount((prev) => Math.min(sortedFiles.length, prev + 80))}
+                      className="px-3.5 py-1.5 rounded-lg border border-line bg-surface hover:bg-surface2 text-xs sm:text-sm font-medium text-paper transition-colors shadow-xs"
+                    >
+                      Load more (+80)
+                    </button>
+                    <button
+                      onClick={() => setVisibleFileCount(sortedFiles.length)}
+                      className="px-3.5 py-1.5 rounded-lg border border-teal/40 bg-teal/10 hover:bg-teal/20 text-xs sm:text-sm font-medium text-teal transition-colors shadow-xs"
+                    >
+                      Show all ({sortedFiles.length - displayedFiles.length} remaining)
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -2260,15 +2391,26 @@ export default function Browser() {
                   <div className="text-xs text-dim">
                     Showing {displayedFiles.length} of {sortedFiles.length} files
                   </div>
-                  <button
-                    onClick={() => setVisibleFileCount((prev) => prev + 80)}
-                    className="px-4 py-1.5 rounded-lg border border-line bg-surface hover:bg-surface2 text-sm font-medium text-paper transition-colors shadow-xs"
-                  >
-                    Load more files ({sortedFiles.length - displayedFiles.length} remaining)
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setVisibleFileCount((prev) => Math.min(sortedFiles.length, prev + 80))}
+                      className="px-3.5 py-1.5 rounded-lg border border-line bg-surface hover:bg-surface2 text-xs sm:text-sm font-medium text-paper transition-colors shadow-xs"
+                    >
+                      Load more (+80)
+                    </button>
+                    <button
+                      onClick={() => setVisibleFileCount(sortedFiles.length)}
+                      className="px-3.5 py-1.5 rounded-lg border border-teal/40 bg-teal/10 hover:bg-teal/20 text-xs sm:text-sm font-medium text-teal transition-colors shadow-xs"
+                    >
+                      Show all ({sortedFiles.length - displayedFiles.length} remaining)
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
+          )}
+          {sortedFiles.length > displayedFiles.length && (
+            <div ref={sentinelRef} className="h-8 w-full pointer-events-none" />
           )}
           </>
         )}
@@ -2433,6 +2575,15 @@ export default function Browser() {
           <span className="text-xs font-semibold text-paper whitespace-nowrap">
             {selectedIds.size} {selectedIds.size === 1 ? "item" : "items"}
           </span>
+          {!inTrash && totalItemsCount > 0 && selectedIds.size < totalItemsCount && (
+            <button
+              onClick={handleSelectAll}
+              className="text-xs text-teal hover:underline font-medium px-2 py-0.5 rounded bg-teal/15 hover:bg-teal/25 border border-teal/30 transition-colors whitespace-nowrap flex items-center gap-1"
+              title={`Select all ${totalItemsCount} items in this folder`}
+            >
+              <span>Select all {totalItemsCount}</span>
+            </button>
+          )}
           <span className="w-px h-4 bg-line shrink-0" />
           {inTrash ? (
             <>
