@@ -317,8 +317,8 @@ export const api = {
   },
 
   // Tunnel (Auto Public Online URL)
-  getTunnelStatus: (): Promise<{ active: boolean; url: string | null }> => request("/tunnel"),
-  startTunnel: (): Promise<{ active: boolean; url: string }> => request("/tunnel/start", { method: "POST" }),
+  getTunnelStatus: (): Promise<{ active: boolean; url: string | null; isHosted?: boolean }> => request("/tunnel"),
+  startTunnel: (): Promise<{ active: boolean; url: string | null; isHosted?: boolean; message?: string }> => request("/tunnel/start", { method: "POST" }),
   stopTunnel: (): Promise<{ active: boolean; url: null }> => request("/tunnel/stop", { method: "POST" }),
 
   // Downloads a URL with byte-level progress + live speed, used for the

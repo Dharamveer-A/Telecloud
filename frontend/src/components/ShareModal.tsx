@@ -42,6 +42,17 @@ export default function ShareModal({ item, folderPassword, onClose }: Props) {
   const [tunnelLoading, setTunnelLoading] = useState(false);
   const [useWorldwideLink, setUseWorldwideLink] = useState(true);
 
+  // Check if we are running on a public host (e.g. Render, production domain, Vercel, Netlify)
+  const isLocalHost =
+    typeof window !== "undefined" &&
+    (window.location.hostname === "localhost" ||
+      window.location.hostname === "127.0.0.1" ||
+      window.location.hostname.endsWith(".local") ||
+      window.location.hostname.startsWith("192.168.") ||
+      window.location.hostname.startsWith("10.") ||
+      /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(window.location.hostname));
+  const isPublicHost = !isLocalHost;
+
   // Create form state
   const [expiresIn, setExpiresIn] = useState<number | null>(24); // 24 hours default
   const [usePassword, setUsePassword] = useState(false);
@@ -53,10 +64,17 @@ export default function ShareModal({ item, folderPassword, onClose }: Props) {
     async function loadData() {
       setLoading(true);
       try {
-        const [shareRes, tunnelRes] = await Promise.all([
+        const promises: [
+          Promise<{ share: any }>,
+          Promise<{ active: boolean; url: string | null; isHosted?: boolean }>
+        ] = [
           api.getShareForTarget(item.id).catch(() => ({ share: null })),
-          api.getTunnelStatus().catch(() => ({ active: false, url: null })),
-        ]);
+          !isPublicHost
+            ? api.getTunnelStatus().catch(() => ({ active: false, url: null }))
+            : Promise.resolve({ active: true, url: null, isHosted: true }),
+        ];
+
+        const [shareRes, tunnelRes] = await Promise.all(promises);
 
         if (shareRes.share) {
           setExistingShare(shareRes.share);
@@ -72,9 +90,10 @@ export default function ShareModal({ item, folderPassword, onClose }: Props) {
       }
     }
     loadData();
-  }, [item.id]);
+  }, [item.id, isPublicHost]);
 
   const handleStartTunnel = async () => {
+    if (isPublicHost) return;
     setTunnelLoading(true);
     setError("");
     try {
@@ -84,14 +103,22 @@ export default function ShareModal({ item, folderPassword, onClose }: Props) {
         setUseWorldwideLink(true);
       }
     } catch (err: any) {
-      setError("Failed to create public tunnel: " + (err.message || ""));
+      const msg = err.message || "";
+      if (/ENOENT|spawn|not found/i.test(msg)) {
+        setError(
+          "Cloudflare tunnel (cloudflared) is not installed locally. Local link can still be shared on your network."
+        );
+      } else {
+        setError("Failed to create public tunnel: " + msg);
+      }
     } finally {
       setTunnelLoading(false);
     }
   };
 
-  const effectiveOrigin =
-    useWorldwideLink && tunnelUrl ? tunnelUrl : window.location.origin;
+  const effectiveOrigin = isPublicHost
+    ? window.location.origin
+    : (useWorldwideLink && tunnelUrl ? tunnelUrl : window.location.origin);
 
   const shareUrl = existingShare
     ? `${effectiveOrigin}/share/${existingShare.token}`
@@ -124,8 +151,8 @@ export default function ShareModal({ item, folderPassword, onClose }: Props) {
       });
       setExistingShare(res.share);
 
-      // If tunnel is not active yet, trigger it automatically so they get a public link
-      if (!tunnelUrl) {
+      // If running locally and tunnel is not active yet, trigger it automatically so they get a public link
+      if (!isPublicHost && !tunnelUrl) {
         handleStartTunnel().catch(() => {});
       }
     } catch (err: any) {
@@ -200,7 +227,15 @@ export default function ShareModal({ item, folderPassword, onClose }: Props) {
           <div className="space-y-4">
             {/* Worldwide vs Local indicator */}
             <div className="flex items-center justify-between text-xs bg-surface2/40 border border-line/60 rounded-lg px-3 py-2">
-              {tunnelUrl ? (
+              {isPublicHost ? (
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-teal animate-pulse" />
+                  <span className="font-medium text-teal flex items-center gap-1.5">
+                    <Globe className="w-3.5 h-3.5 text-teal shrink-0" />
+                    <span>Worldwide Online Link (Active)</span>
+                  </span>
+                </div>
+              ) : tunnelUrl ? (
                 <div className="flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-teal animate-pulse" />
                   <span className="font-medium text-teal flex items-center gap-1.5">
@@ -224,7 +259,9 @@ export default function ShareModal({ item, folderPassword, onClose }: Props) {
                 </div>
               )}
 
-              {tunnelUrl ? (
+              {isPublicHost ? (
+                <span className="text-[11px] text-dim">{window.location.host}</span>
+              ) : tunnelUrl ? (
                 <button
                   type="button"
                   onClick={() => setUseWorldwideLink(!useWorldwideLink)}
@@ -256,7 +293,7 @@ export default function ShareModal({ item, folderPassword, onClose }: Props) {
 
             <div className="bg-surface2/60 border border-line rounded-lg p-3.5 space-y-2">
               <label className="text-[11px] font-semibold uppercase tracking-wider text-dim block">
-                {useWorldwideLink && tunnelUrl ? "Worldwide Share URL" : "Share URL"}
+                {isPublicHost || (useWorldwideLink && tunnelUrl) ? "Worldwide Share URL" : "Share URL"}
               </label>
               <div className="flex items-center gap-2">
                 <input
@@ -373,19 +410,32 @@ export default function ShareModal({ item, folderPassword, onClose }: Props) {
           <div className="space-y-4">
             {/* Worldwide status preview */}
             <div className="flex items-center justify-between text-xs bg-surface2/40 border border-line/60 rounded-lg px-3 py-2">
-              <div className="flex items-center gap-2">
-                <span
-                  className={`w-2 h-2 rounded-full ${
-                    tunnelUrl ? "bg-teal animate-pulse" : "bg-amber-400"
-                  }`}
-                />
-                <span className="text-dim">
-                  {tunnelUrl
-                    ? "Worldwide link enabled"
-                    : "Worldwide link will connect automatically"}
-                </span>
-              </div>
-              {!tunnelUrl && (
+              {isPublicHost ? (
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-teal animate-pulse" />
+                  <span className="font-medium text-teal flex items-center gap-1.5">
+                    <Globe className="w-3.5 h-3.5 text-teal shrink-0" />
+                    <span>Worldwide Online Link</span>
+                  </span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`w-2 h-2 rounded-full ${
+                      tunnelUrl ? "bg-teal animate-pulse" : "bg-amber-400"
+                    }`}
+                  />
+                  <span className="text-dim">
+                    {tunnelUrl
+                      ? "Worldwide link enabled"
+                      : "Worldwide link will connect automatically"}
+                  </span>
+                </div>
+              )}
+
+              {isPublicHost ? (
+                <span className="text-[11px] text-dim">{window.location.host}</span>
+              ) : !tunnelUrl ? (
                 <button
                   type="button"
                   onClick={handleStartTunnel}
@@ -394,7 +444,7 @@ export default function ShareModal({ item, folderPassword, onClose }: Props) {
                 >
                   {tunnelLoading ? "Connecting..." : "Connect now"}
                 </button>
-              )}
+              ) : null}
             </div>
 
             {item.kind === "folder" && (

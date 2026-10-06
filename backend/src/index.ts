@@ -164,7 +164,7 @@ async function main() {
   app.listen(port, "0.0.0.0", () => {
     console.log(`TeleCloud backend listening on http://0.0.0.0:${port}`);
 
-    if (process.env.AUTO_TUNNEL !== "false") {
+    if (process.env.AUTO_TUNNEL !== "false" && process.env.RENDER !== "true") {
       tunnelManager.startTunnel().catch((err) => {
         console.warn("[TeleCloud Tunnel] Auto-start warning:", err.message);
       });

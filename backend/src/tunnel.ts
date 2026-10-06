@@ -22,6 +22,11 @@ class TunnelManager {
   }
 
   public async startTunnel(port?: number): Promise<string> {
+    if (process.env.RENDER === "true" || process.env.AUTO_TUNNEL === "false") {
+      console.log("[TeleCloud Tunnel] Skipped: running in hosted environment (RENDER/AUTO_TUNNEL=false).");
+      return "";
+    }
+
     if (port) this.targetPort = port;
 
     if (this.url && this.process && !this.process.killed) {
