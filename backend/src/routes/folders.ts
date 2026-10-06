@@ -21,7 +21,18 @@ function rootIdFor(userId: string) {
 // must match, otherwise only folder metadata (name, locked flag) is
 // returned - never its contents.
 router.get("/:folderId", async (req: AuthedRequest, res) => {
-  const folder = db.folders.get(req.params.folderId);
+  let folder = db.folders.get(req.params.folderId);
+  if (!folder && req.params.folderId === rootIdFor(req.userId!)) {
+    const rootFolder: FolderRecord = {
+      id: rootIdFor(req.userId!),
+      parentId: null,
+      name: "My Files",
+      createdAt: Date.now(),
+      locked: false,
+    };
+    db.folders.create(rootFolder);
+    folder = rootFolder;
+  }
   if (!folder || folder.deletedAt) return res.status(404).json({ error: "Folder not found" });
 
   if (folder.locked) {

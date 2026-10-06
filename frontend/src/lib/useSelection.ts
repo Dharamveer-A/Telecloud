@@ -13,6 +13,8 @@ export function useSelection() {
   }
 
   function handlePointerDown(e: React.PointerEvent) {
+    // Disable marquee selection box on mobile touch devices (touch should scroll, not drag-select)
+    if (e.pointerType === "touch") return;
     if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest('.selectable-item')) return;
     
