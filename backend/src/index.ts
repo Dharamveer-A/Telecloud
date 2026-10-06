@@ -24,51 +24,39 @@ async function main() {
   // This MUST happen before initDb() / any sqlite access (sqlite uses lazy open).
   if (process.env.RENDER === "true" || process.env.DB_BACKUP_ENABLED === "true") {
     try {
-      // We need a bootstrap Telegram client using the first logged-in user's session.
-      // We read the session directly from the DB file if it already exists locally,
-      // or skip restore if this is a completely fresh deploy with no backup yet.
-      const DATA_DIR = process.env.DATA_DIR || "./data";
-      const dbPath = path.join(DATA_DIR, "db.sqlite");
-      const hasLocalDb = fs.existsSync(dbPath);
+      const bootstrapSession = process.env.BOOTSTRAP_TELEGRAM_SESSION;
+      if (bootstrapSession) {
+        const { TelegramClient } = await import("telegram");
+        const { StringSession } = await import("telegram/sessions");
+        const { decryptSession } = await import("./utils/crypto");
 
-      if (!hasLocalDb) {
-        // No local DB — try to restore from Telegram using env-provided session
-        const bootstrapSession = process.env.BOOTSTRAP_TELEGRAM_SESSION;
-        if (bootstrapSession) {
-          const { TelegramClient } = await import("telegram");
-          const { StringSession } = await import("telegram/sessions");
-          const { decryptSession } = await import("./utils/crypto");
+        const apiId = parseInt(process.env.TELEGRAM_API_ID || "0", 10);
+        const apiHash = process.env.TELEGRAM_API_HASH || "";
 
-          const apiId = parseInt(process.env.TELEGRAM_API_ID || "0", 10);
-          const apiHash = process.env.TELEGRAM_API_HASH || "";
-
-          if (apiId && apiHash) {
-            let sessionStr = bootstrapSession;
-            try {
-              sessionStr = decryptSession(bootstrapSession);
-            } catch {
-              // Already plain session string
-            }
-            const bootstrapClient = new TelegramClient(
-              new StringSession(sessionStr),
-              apiId,
-              apiHash,
-              { connectionRetries: 3 }
-            );
-            await bootstrapClient.connect();
-            await restoreDbFromTelegram(bootstrapClient);
-            await bootstrapClient.disconnect();
-          } else {
-            console.warn("[DB Backup] TELEGRAM_API_ID/HASH not set — skipping restore.");
+        if (apiId && apiHash) {
+          let sessionStr = bootstrapSession;
+          try {
+            sessionStr = decryptSession(bootstrapSession);
+          } catch {
+            // Already plain session string
           }
-        } else {
-          console.log(
-            "[DB Backup] No BOOTSTRAP_TELEGRAM_SESSION set — starting fresh. " +
-              "Set this env var in Render to enable DB restore on restart."
+          const bootstrapClient = new TelegramClient(
+            new StringSession(sessionStr),
+            apiId,
+            apiHash,
+            { connectionRetries: 3 }
           );
+          await bootstrapClient.connect();
+          await restoreDbFromTelegram(bootstrapClient);
+          await bootstrapClient.disconnect();
+        } else {
+          console.warn("[DB Backup] TELEGRAM_API_ID/HASH not set — skipping restore.");
         }
       } else {
-        console.log("[DB Backup] Local db.sqlite found — skipping restore (using local copy).");
+        console.log(
+          "[DB Backup] No BOOTSTRAP_TELEGRAM_SESSION set — starting fresh. " +
+            "Set this env var in Render to enable DB restore on restart."
+        );
       }
     } catch (err: any) {
       console.warn("[DB Backup] Startup restore error (continuing):", err?.message);
@@ -119,6 +107,21 @@ async function main() {
   app.use("/api/tunnel", tunnelRoutes);
 
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
+
+  // Force-trigger a restore from Telegram Saved Messages at any time
+  app.all("/api/sync/restore", async (_req, res) => {
+    try {
+      const allUsers = db.users.all();
+      if (allUsers.length > 0) {
+        const client = await getClientForUser(allUsers[0].id);
+        const restored = await restoreDbFromTelegram(client);
+        return res.json({ ok: true, restored });
+      }
+      return res.status(400).json({ error: "No user found to connect" });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message });
+    }
+  });
 
   // Serve frontend production build if available.
   // Local dev:  backend/../frontend/dist

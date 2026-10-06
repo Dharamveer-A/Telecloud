@@ -85,6 +85,10 @@ export async function restoreDbFromTelegram(client: TelegramClient): Promise<boo
     }
 
     fs.writeFileSync(DB_PATH, buffer);
+    try {
+      const { reloadSqlite } = await import("../db/sqlite");
+      reloadSqlite();
+    } catch {}
     console.log(
       `[DB Backup] ✅ Database restored (${(buffer.length / 1024).toFixed(1)} KB) from Telegram.`
     );
