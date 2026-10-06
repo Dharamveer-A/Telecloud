@@ -20,8 +20,8 @@ services:
     region: singapore                   # Closest to India = lowest latency
     rootDir: .
     buildCommand: >
-      cd frontend && npm ci && npm run build &&
-      cd ../backend && npm ci && npm run build &&
+      cd frontend && npm install --include=dev && npm run build &&
+      cd ../backend && npm install --include=dev && npm run build &&
       cp -r ../frontend/dist ./dist/frontend_dist
     startCommand: node dist/index.js
     healthCheckPath: /api/health
