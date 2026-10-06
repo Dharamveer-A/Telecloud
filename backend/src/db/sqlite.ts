@@ -124,6 +124,27 @@ sqlite.exec(`
   CREATE INDEX IF NOT EXISTS idx_shares_target ON shares(targetId);
 `);
 
+export function purgeSystemBackups(dbInstance?: any): void {
+  const instance = dbInstance || _sqliteInstance || sqlite;
+  if (!instance) return;
+  try {
+    instance.exec(`
+      DELETE FROM files 
+      WHERE name = 'db.sqlite' 
+         OR name LIKE 'db.sqlite%' 
+         OR name LIKE '%.sqlite' 
+         OR name LIKE '%.sqlite-wal' 
+         OR name LIKE '%.sqlite-shm' 
+         OR name LIKE 'telecloud_backup_%';
+    `);
+  } catch (err: any) {
+    console.warn("[SQLite] Notice: could not purge system backups:", err?.message);
+  }
+}
+
+// Automatically purge system backup files from tables on startup
+purgeSystemBackups(sqlite);
+
 // Check and perform automatic migration from db.json if database is empty
 export function migrateFromLowDbIfEmpty() {
   const userCount = (sqlite.prepare("SELECT COUNT(*) as count FROM users").get() as any).count;
@@ -297,7 +318,7 @@ function createStatements(instance: InstanceType<typeof Database>) {
       SELECT 
         f.id, f.parentId, f.name, f.createdAt, f.locked, f.deletedAt, f.topicId,
         (
-          (SELECT COUNT(*) FROM files WHERE folderId = f.id AND deletedAt IS NULL) +
+          (SELECT COUNT(*) FROM files WHERE folderId = f.id AND deletedAt IS NULL AND name NOT LIKE 'db.sqlite%' AND name NOT LIKE '%.sqlite' AND name NOT LIKE 'telecloud_backup_%') +
           (SELECT COUNT(*) FROM folders WHERE parentId = f.id AND deletedAt IS NULL)
         ) AS itemCount
       FROM folders f
@@ -308,13 +329,13 @@ function createStatements(instance: InstanceType<typeof Database>) {
     // Files
     getFile: instance.prepare("SELECT * FROM files WHERE id = ?"),
     getFilesInFolder: instance.prepare(
-      "SELECT * FROM files WHERE folderId = ? AND deletedAt IS NULL ORDER BY createdAt ASC"
+      "SELECT * FROM files WHERE folderId = ? AND deletedAt IS NULL AND name NOT LIKE 'db.sqlite%' AND name NOT LIKE '%.sqlite' AND name NOT LIKE 'telecloud_backup_%' ORDER BY createdAt ASC"
     ),
     getFolderListingFiles: instance.prepare(
-      "SELECT id, name, size, mimeType, createdAt, encrypted FROM files WHERE folderId = ? AND deletedAt IS NULL ORDER BY createdAt ASC"
+      "SELECT id, name, size, mimeType, createdAt, encrypted FROM files WHERE folderId = ? AND deletedAt IS NULL AND name NOT LIKE 'db.sqlite%' AND name NOT LIKE '%.sqlite' AND name NOT LIKE 'telecloud_backup_%' ORDER BY createdAt ASC"
     ),
     countFilesInFolder: instance.prepare(
-      "SELECT COUNT(*) as count FROM files WHERE folderId = ? AND deletedAt IS NULL"
+      "SELECT COUNT(*) as count FROM files WHERE folderId = ? AND deletedAt IS NULL AND name NOT LIKE 'db.sqlite%' AND name NOT LIKE '%.sqlite' AND name NOT LIKE 'telecloud_backup_%'"
     ),
     getAllFilesRaw: instance.prepare("SELECT * FROM files"),
     createFile: instance.prepare(
@@ -357,7 +378,7 @@ function createStatements(instance: InstanceType<typeof Database>) {
 
     // Search
     searchFiles: instance.prepare(
-      "SELECT id, folderId, name, mimeType, size, createdAt, encrypted FROM files WHERE deletedAt IS NULL AND name LIKE ? ESCAPE '\\' ORDER BY createdAt DESC LIMIT 200"
+      "SELECT id, folderId, name, mimeType, size, createdAt, encrypted FROM files WHERE deletedAt IS NULL AND name NOT LIKE 'db.sqlite%' AND name NOT LIKE '%.sqlite' AND name NOT LIKE 'telecloud_backup_%' AND name LIKE ? ESCAPE '\\' ORDER BY createdAt DESC LIMIT 200"
     ),
     searchFolders: instance.prepare(
       "SELECT id, parentId, name, createdAt, locked FROM folders WHERE deletedAt IS NULL AND name LIKE ? ESCAPE '\\' ORDER BY createdAt DESC LIMIT 100"
@@ -382,6 +403,7 @@ export function reloadSqlite(): void {
   _sqliteInstance.pragma("journal_mode = WAL");
   _sqliteInstance.pragma("synchronous = NORMAL");
   _sqliteInstance.pragma("foreign_keys = OFF");
+  purgeSystemBackups(_sqliteInstance);
   stmts = createStatements(_sqliteInstance);
 }
 
@@ -585,6 +607,18 @@ export const sqliteDb = {
     return rows.map(mapFile);
   },
   createFile(file: FileRecord): void {
+    const lower = (file.name || "").toLowerCase();
+    if (
+      lower === "db.sqlite" ||
+      lower.endsWith(".sqlite") ||
+      lower.endsWith(".sqlite-wal") ||
+      lower.endsWith(".sqlite-shm") ||
+      lower.startsWith("telecloud_backup_") ||
+      file.mimeType === "application/x-sqlite3"
+    ) {
+      console.warn(`[SQLite] Prevented inserting system backup file into user files table: "${file.name}"`);
+      return;
+    }
     stmts.createFile.run({
       id: file.id,
       folderId: file.folderId,

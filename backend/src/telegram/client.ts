@@ -145,6 +145,14 @@ export async function indexTelegramMessage(
 ): Promise<FileRecord | null> {
   if (!msg.media) return null;
 
+  // 1. Ignore database backup messages and internal system artifacts
+  if (
+    msg.message &&
+    (msg.message.includes("TELECLOUD_DB_BACKUP") || msg.message.includes("TELECLOUD_BACKUP"))
+  ) {
+    return null;
+  }
+
   // Check if message is already indexed
   const allFiles = db.files.allRaw();
   const alreadyIndexed = allFiles.some(
@@ -181,17 +189,39 @@ export async function indexTelegramMessage(
     return null;
   }
 
-  // Determine folder from topic ID
+  // 2. Reject database backups, sqlite files, or system artifacts by filename or MIME
+  const lowerName = filename.toLowerCase();
+  if (
+    lowerName === "db.sqlite" ||
+    lowerName.endsWith(".sqlite") ||
+    lowerName.endsWith(".sqlite-wal") ||
+    lowerName.endsWith(".sqlite-shm") ||
+    lowerName.startsWith("telecloud_backup_") ||
+    mimeType === "application/x-sqlite3"
+  ) {
+    return null;
+  }
+
+  // 3. Determine target folder from forum topic ID
   const replyToMsgId =
-    (msg.replyTo as any)?.replyToMsgId || (msg.replyTo as any)?.replyToTopId;
+    (msg.replyTo as any)?.replyToTopId || (msg.replyTo as any)?.replyToMsgId;
+
   let folderId = defaultFolderId || `root_${userId}`;
 
-  if (replyToMsgId) {
+  if (replyToMsgId && replyToMsgId !== 1) {
     const allFolders = db.folders.allRaw();
     const matched = allFolders.find((f) => f.topicId === replyToMsgId);
     if (matched) {
       folderId = matched.id;
+    } else {
+      // Message was sent to a topic that is NOT a user folder
+      // (e.g. "⚙️ System / Backups" topic, or an external/deleted topic).
+      // DO NOT dump it into root folder or default folder. Skip it.
+      return null;
     }
+  } else {
+    // Only messages sent without a topic or to the General topic (topicId 1) belong to root
+    folderId = `root_${userId}`;
   }
 
   const record: FileRecord = {
@@ -224,9 +254,17 @@ export async function syncTopicMessages(
   userId: string,
   folderId: string
 ): Promise<{ importedCount: number; files: FileRecord[] }> {
+  // Purge any lingering system backup entries from db.files before returning files
+  try {
+    const { purgeSystemBackups } = await import("../db/sqlite");
+    purgeSystemBackups();
+  } catch {}
+
   const forumMod = await getOrCreateForumSupergroup(client, userId);
   const folder = db.folders.get(folderId);
   const peer = inputPeerFor(forumMod);
+
+  const isRoot = !folder || !folder.parentId || folder.id === `root_${userId}`;
 
   const getParams: any = { limit: 100 };
   if (folder && folder.topicId) {
@@ -238,8 +276,23 @@ export async function syncTopicMessages(
 
   for (const msg of messages) {
     if (msg instanceof Api.Message && msg.media) {
+      const msgTopicId =
+        (msg.replyTo as any)?.replyToTopId || (msg.replyTo as any)?.replyToMsgId;
+
+      // When syncing root folder:
+      // Skip any message that was sent inside a specific subfolder topic or backup topic
+      if (isRoot && msgTopicId && msgTopicId !== 1) {
+        continue;
+      }
+
+      // When syncing a specific subfolder:
+      // Skip any message that is not part of this subfolder's topic
+      if (!isRoot && folder?.topicId && msgTopicId !== folder.topicId) {
+        continue;
+      }
+
       const rec = await indexTelegramMessage(client, userId, forumMod, msg, folderId);
-      if (rec) {
+      if (rec && rec.folderId === folderId) {
         imported.push(rec);
       }
     }

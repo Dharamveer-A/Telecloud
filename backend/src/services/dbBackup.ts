@@ -131,8 +131,9 @@ export async function restoreDbFromTelegram(client: TelegramClient): Promise<boo
     fs.writeFileSync(DB_PATH, buffer);
 
     try {
-      const { reloadSqlite } = await import("../db/sqlite");
+      const { reloadSqlite, purgeSystemBackups } = await import("../db/sqlite");
       reloadSqlite();
+      purgeSystemBackups();
     } catch {}
     console.log(
       `[DB Backup] ✅ Database restored (${(buffer.length / 1024).toFixed(1)} KB) from Telegram.`
@@ -156,6 +157,11 @@ export async function backupDbToTelegram(client: TelegramClient): Promise<void> 
 
   isBacking = true;
   try {
+    try {
+      const { purgeSystemBackups } = await import("../db/sqlite");
+      purgeSystemBackups();
+    } catch {}
+
     const dbBuffer = fs.readFileSync(DB_PATH);
     const { targetPeer, topicId } = await getBackupTarget(client);
 
