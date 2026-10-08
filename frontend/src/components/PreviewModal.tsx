@@ -42,6 +42,9 @@ function formatBytes(n?: number) {
   return `${v.toFixed(1)} ${units[i]}`;
 }
 
+// Module-level cache for converted HEIC photos so navigating back is instant
+const heicBlobCache = new Map<string, string>();
+
 export default function PreviewModal({
   file,
   files = [],
@@ -54,8 +57,14 @@ export default function PreviewModal({
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [textContent, setTextContent] = useState<string | null>(null);
   const [isTextLoading, setIsTextLoading] = useState(false);
+  const [heicUrl, setHeicUrl] = useState<string | null>(null);
+  const [isHeicConverting, setIsHeicConverting] = useState(false);
 
-  const isImage = file.mimeType.startsWith("image/");
+  const isHeic =
+    /\.(heic|heif)$/i.test(file.name) ||
+    file.mimeType === "image/heic" ||
+    file.mimeType === "image/heif";
+  const isImage = file.mimeType.startsWith("image/") && !isHeic;
   const isVideo = file.mimeType.startsWith("video/");
   const isAudio = file.mimeType.startsWith("audio/");
   const isPdf = file.mimeType === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
@@ -111,7 +120,56 @@ export default function PreviewModal({
     setImageLoaded(false);
     setError("");
     setTextContent(null);
+    setHeicUrl(heicBlobCache.get(file.id) || null);
+    setIsHeicConverting(false);
   }, [file.id]);
+
+  // Convert Apple HEIC to JPEG in browser using WebAssembly
+  useEffect(() => {
+    if (!isHeic) return;
+    if (heicBlobCache.has(file.id)) {
+      setHeicUrl(heicBlobCache.get(file.id)!);
+      return;
+    }
+
+    let cancelled = false;
+    setIsHeicConverting(true);
+
+    (async () => {
+      try {
+        const res = await fetch(api.fileUrl(file.id, password), {
+          headers: { Authorization: `Bearer ${localStorage.getItem("telecloud_token")}` },
+        });
+        if (!res.ok) throw new Error("Failed to download HEIC image");
+        const blob = await res.blob();
+        if (cancelled) return;
+
+        const heic2any = ((await import("heic2any")) as any).default;
+        const converted = await heic2any({
+          blob,
+          toType: "image/jpeg",
+          quality: 0.9,
+        });
+
+        if (cancelled) return;
+        const resultBlob = Array.isArray(converted) ? converted[0] : converted;
+        const url = URL.createObjectURL(resultBlob);
+        heicBlobCache.set(file.id, url);
+        setHeicUrl(url);
+      } catch (err: any) {
+        if (!cancelled) {
+          console.warn("HEIC preview conversion warning:", err);
+          setError("Apple HEIC photos are not natively supported by Chrome/Edge. Please download to view the original.");
+        }
+      } finally {
+        if (!cancelled) setIsHeicConverting(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [file.id, isHeic, password]);
 
   // Smart Preloading for next & previous images/thumbnails
   useEffect(() => {
@@ -364,6 +422,27 @@ export default function PreviewModal({
                   <Loader2 className="w-3.5 h-3.5 animate-spin text-teal" />
                   <span className="text-[11px] font-medium">Loading high resolution…</span>
                 </div>
+              )}
+            </div>
+          )}
+
+          {/* APPLE HEIC / HEIF PREVIEW (Converted to JPEG on-the-fly) */}
+          {isHeic && !error && (
+            <div className="relative flex items-center justify-center w-full h-full max-h-[80vh] overflow-hidden">
+              {isHeicConverting && !heicUrl && (
+                <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+                  <Loader2 className="w-9 h-9 animate-spin text-teal" />
+                  <p className="text-paper text-sm font-semibold">Converting Apple HEIC photo for preview…</p>
+                  <p className="text-dim text-xs">Converting high-efficiency image to JPEG for browser display</p>
+                </div>
+              )}
+              {heicUrl && (
+                <img
+                  key={heicUrl}
+                  src={heicUrl}
+                  alt={file.name}
+                  className="max-h-[78vh] sm:max-h-[80vh] max-w-full rounded-lg object-contain shadow-2xl"
+                />
               )}
             </div>
           )}
