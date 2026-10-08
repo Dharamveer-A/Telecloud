@@ -70,7 +70,18 @@ async function main() {
           );
           await bootstrapClient.connect();
           await restoreDbFromTelegram(bootstrapClient);
-          await bootstrapClient.disconnect();
+          try {
+            const me = await bootstrapClient.getMe();
+            if (me) {
+              const { registerActiveClient } = await import("./telegram/client");
+              registerActiveClient(String(me.id), bootstrapClient);
+              console.log(`[Startup] Registered bootstrap client for user ${me.id} — preventing AUTH_KEY_DUPLICATED.`);
+            } else {
+              await bootstrapClient.disconnect().catch(() => {});
+            }
+          } catch {
+            await bootstrapClient.disconnect().catch(() => {});
+          }
         } else {
           console.warn("[DB Backup] TELEGRAM_API_ID/HASH not set — skipping restore.");
         }

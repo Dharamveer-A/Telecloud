@@ -370,6 +370,12 @@ export function evictClientForUser(userId: string): void {
   activeListeners.delete(userId);
 }
 
+// Register an already connected client (e.g. startup bootstrap client) to avoid duplicate connections
+export function registerActiveClient(userId: string, client: TelegramClient): void {
+  activeClients.set(userId, client);
+  startTelegramSyncListener(client, userId).catch(() => {});
+}
+
 // Get (or reconnect) the live client for an already-logged-in user.
 export async function getClientForUser(userId: string): Promise<TelegramClient> {
   const cached = activeClients.get(userId);

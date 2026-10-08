@@ -460,16 +460,32 @@ export default function PreviewModal({
           {error && (
             <div className="flex flex-col items-center justify-center p-8 text-center max-w-md">
               <AlertCircle className="w-10 h-10 text-danger mb-3" />
-              <p className="text-danger text-sm font-medium mb-1">{error}</p>
-              <p className="text-dim text-xs mb-4">The file could not be rendered inline.</p>
-              <a
-                href={directStreamUrl}
-                download={file.name}
-                className="px-4 py-2 bg-teal text-ink font-semibold rounded-lg text-xs hover:opacity-90 transition-opacity flex items-center gap-2"
-              >
-                <Download className="w-4 h-4" />
-                <span>Download File</span>
-              </a>
+              <p className="text-danger text-sm font-semibold mb-1">{error}</p>
+              <p className="text-dim text-xs mb-4">
+                {error.toLowerCase().includes("session")
+                  ? "Your Telegram connection needs authentication. Log in to access your cloud files."
+                  : "The file could not be rendered inline."}
+              </p>
+              {error.toLowerCase().includes("session") ? (
+                <button
+                  onClick={() => {
+                    localStorage.removeItem("telecloud_token");
+                    window.location.href = "/login";
+                  }}
+                  className="px-5 py-2.5 bg-teal text-ink font-bold rounded-xl text-xs hover:opacity-90 transition-all shadow-md flex items-center gap-2 cursor-pointer"
+                >
+                  <span>Log In to Reconnect</span>
+                </button>
+              ) : (
+                <a
+                  href={directStreamUrl}
+                  download={file.name}
+                  className="px-4 py-2 bg-teal text-ink font-semibold rounded-lg text-xs hover:opacity-90 transition-opacity flex items-center gap-2"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Download File</span>
+                </a>
+              )}
             </div>
           )}
 
@@ -510,12 +526,31 @@ export default function PreviewModal({
                 alt={file.name}
                 onLoad={() => setImageLoaded(true)}
                 onError={async () => {
+                  setImageLoaded(true);
+                  // Probe URL to check if failure was due to Telegram session expiration (401)
+                  try {
+                    const probe = await fetch(previewUrl, {
+                      headers: { Authorization: `Bearer ${localStorage.getItem("telecloud_token")}` },
+                    });
+                    if (probe.status === 401) {
+                      const data = await probe.json().catch(() => ({}));
+                      if (data.code === "SESSION_EXPIRED" || data.error?.includes("Telegram session")) {
+                        setError("Telegram session expired. Please log in again to reconnect your Telegram cloud.");
+                        return;
+                      }
+                    }
+                  } catch {}
+
                   // If server preview fails for HEIC, attempt client-side fallback with multiple: true
                   if (isHeic && !blobUrl) {
                     try {
                       const res = await fetch(api.fileUrl(file.id, password), {
                         headers: { Authorization: `Bearer ${localStorage.getItem("telecloud_token")}` },
                       });
+                      if (res.status === 401) {
+                        setError("Telegram session expired. Please log in again to reconnect your Telegram cloud.");
+                        return;
+                      }
                       if (!res.ok) throw new Error("Failed to fetch image");
                       const blob = await res.blob();
                       const mod: any = await import("heic2any");
@@ -534,7 +569,6 @@ export default function PreviewModal({
                       console.warn("Client fallback also failed:", fallbackErr);
                     }
                   }
-                  setImageLoaded(true);
                   setError("Failed to render image");
                 }}
                 className={`max-h-[78vh] sm:max-h-[80vh] max-w-full rounded-lg object-contain transition-opacity duration-300 z-10 shadow-2xl ${
