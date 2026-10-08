@@ -144,11 +144,12 @@ export default function PreviewModal({
         const blob = await res.blob();
         if (cancelled) return;
 
-        const heic2any = ((await import("heic2any")) as any).default;
+        const mod: any = await import("heic2any");
+        const heic2any = typeof mod === "function" ? mod : (mod.default || mod);
         const converted = await heic2any({
           blob,
           toType: "image/jpeg",
-          quality: 0.9,
+          quality: 0.85,
         });
 
         if (cancelled) return;
