@@ -11,6 +11,7 @@ import {
   FileText,
   ShieldCheck,
   Sparkles,
+  RotateCw,
 } from "lucide-react";
 import { api } from "../lib/api";
 import { thumbBlobCache } from "./Thumbnail";
@@ -182,6 +183,13 @@ export default function PreviewModal({
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [textContent, setTextContent] = useState<string | null>(null);
   const [isTextLoading, setIsTextLoading] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
+
+  const handleRetry = useCallback(() => {
+    setError("");
+    setImageLoaded(false);
+    setRetryKey((k) => k + 1);
+  }, []);
 
   const isHeic =
     /\.(heic|heif)$/i.test(file.name) ||
@@ -464,6 +472,8 @@ export default function PreviewModal({
               <p className="text-dim text-xs mb-4">
                 {error.toLowerCase().includes("session")
                   ? "Your Telegram connection needs authentication. Log in to access your cloud files."
+                  : error.includes("502")
+                  ? "The server was temporarily restarting. Click Retry below to reload the file."
                   : "The file could not be rendered inline."}
               </p>
               {error.toLowerCase().includes("session") ? (
@@ -477,14 +487,23 @@ export default function PreviewModal({
                   <span>Log In to Reconnect</span>
                 </button>
               ) : (
-                <a
-                  href={directStreamUrl}
-                  download={file.name}
-                  className="px-4 py-2 bg-teal text-ink font-semibold rounded-lg text-xs hover:opacity-90 transition-opacity flex items-center gap-2"
-                >
-                  <Download className="w-4 h-4" />
-                  <span>Download File</span>
-                </a>
+                <div className="flex items-center gap-2.5">
+                  <button
+                    onClick={handleRetry}
+                    className="px-4 py-2 bg-teal text-ink font-semibold rounded-lg text-xs hover:opacity-90 transition-opacity flex items-center gap-1.5 shadow-sm cursor-pointer"
+                  >
+                    <RotateCw className="w-3.5 h-3.5" />
+                    <span>Retry</span>
+                  </button>
+                  <a
+                    href={directStreamUrl}
+                    download={file.name}
+                    className="px-4 py-2 bg-surface2 hover:bg-surface border border-line text-paper font-semibold rounded-lg text-xs transition-colors flex items-center gap-1.5"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Download</span>
+                  </a>
+                </div>
               )}
             </div>
           )}
@@ -521,13 +540,13 @@ export default function PreviewModal({
 
               {/* Native full-resolution image / converted HEIC JPEG streams directly */}
               <img
-                key={`full-${file.id}-${blobUrl ? "blob" : "stream"}`}
+                key={`full-${file.id}-${retryKey}-${blobUrl ? "blob" : "stream"}`}
                 src={blobUrl || previewUrl}
                 alt={file.name}
                 onLoad={() => setImageLoaded(true)}
                 onError={async () => {
                   setImageLoaded(true);
-                  // Probe URL to check if failure was due to Telegram session expiration (401)
+                  // Probe URL to check if failure was due to 401 or 502/503
                   try {
                     const probe = await fetch(previewUrl, {
                       headers: { Authorization: `Bearer ${localStorage.getItem("telecloud_token")}` },
@@ -539,6 +558,10 @@ export default function PreviewModal({
                         return;
                       }
                     }
+                    if (probe.status === 502 || probe.status === 503) {
+                      setError("Server was temporarily updating (502). Please click Retry.");
+                      return;
+                    }
                   } catch {}
 
                   // If server preview fails for HEIC, attempt client-side fallback with multiple: true
@@ -549,6 +572,10 @@ export default function PreviewModal({
                       });
                       if (res.status === 401) {
                         setError("Telegram session expired. Please log in again to reconnect your Telegram cloud.");
+                        return;
+                      }
+                      if (res.status === 502 || res.status === 503) {
+                        setError("Server was temporarily updating (502). Please click Retry.");
                         return;
                       }
                       if (!res.ok) throw new Error("Failed to fetch image");

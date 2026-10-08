@@ -1,4 +1,5 @@
-const BASE = "/api";
+const API_HOST = (import.meta.env.VITE_API_URL || "").replace(/\/+$/, "");
+const BASE = API_HOST ? (API_HOST.endsWith("/api") ? API_HOST : `${API_HOST}/api`) : "/api";
 
 function token() {
   return localStorage.getItem("telecloud_token") || "";

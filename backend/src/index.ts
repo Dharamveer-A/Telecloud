@@ -128,7 +128,21 @@ async function main() {
   }
 
   const app = express();
-  app.use(cors());
+  app.use(
+    cors({
+      origin: true,
+      credentials: true,
+      methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+      allowedHeaders: ["Content-Type", "Authorization", "Range", "X-Requested-With"],
+      exposedHeaders: [
+        "Content-Range",
+        "Accept-Ranges",
+        "Content-Length",
+        "Content-Disposition",
+        "Content-Type",
+      ],
+    })
+  );
   app.use(express.json());
 
   app.use("/api/auth", authRoutes);

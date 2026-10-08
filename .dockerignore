@@ -1,0 +1,11 @@
+node_modules
+*/node_modules
+.git
+.DS_Store
+data/*.sqlite*
+data/*.jpg
+data/thumbnails
+backend/dist
+frontend/dist
+/tmp
+*.log
