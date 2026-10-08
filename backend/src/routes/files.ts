@@ -169,9 +169,16 @@ router.post("/upload", upload.single("file"), async (req: AuthedRequest, res) =>
     }
     res.json({ file: { id: record.id, name: record.name, size: record.size, mimeType: record.mimeType } });
   } catch (err: any) {
-    if (/SESSION_REVOKED/i.test(err?.message || err?.errorMessage || "")) {
+    if (
+      /SESSION_REVOKED|AUTH_KEY_DUPLICATED|AUTH_KEY_UNREGISTERED/i.test(err?.message || err?.errorMessage || "") ||
+      err?.code === 406 ||
+      err?.status === 401
+    ) {
       evictClientForUser(req.userId!);
-      return res.status(401).json({ error: "Telegram session was revoked. Please log in again to reconnect.", code: "SESSION_REVOKED" });
+      return res.status(401).json({
+        error: "Telegram session was invalidated. Please log in again to reconnect.",
+        code: "SESSION_EXPIRED"
+      });
     }
     res.status(500).json({ error: err.message || "Upload failed" });
   } finally {
@@ -382,9 +389,16 @@ router.get("/:fileId/download", async (req: AuthedRequest, res) => {
     res.setHeader("Accept-Ranges", file.encrypted ? "none" : "bytes");
     await streamFileToResponse(client, file, res, fileKey);
   } catch (err: any) {
-    if (/SESSION_REVOKED/i.test(err?.message || err?.errorMessage || "")) {
+    if (
+      /SESSION_REVOKED|AUTH_KEY_DUPLICATED|AUTH_KEY_UNREGISTERED/i.test(err?.message || err?.errorMessage || "") ||
+      err?.code === 406 ||
+      err?.status === 401
+    ) {
       evictClientForUser(req.userId!);
-      return res.status(401).json({ error: "Telegram session was revoked. Please log in again to reconnect.", code: "SESSION_REVOKED" });
+      return res.status(401).json({
+        error: "Telegram session was invalidated. Please log in again to reconnect.",
+        code: "SESSION_EXPIRED"
+      });
     }
     res.status(500).json({ error: err.message || "Download failed" });
   }

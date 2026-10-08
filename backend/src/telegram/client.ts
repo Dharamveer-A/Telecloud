@@ -377,10 +377,15 @@ export async function getClientForUser(userId: string): Promise<TelegramClient> 
     await client.connect();
   } catch (err: any) {
     if (
-      /SESSION_REVOKED/i.test(err?.message || err?.errorMessage || "") ||
-      /AUTH_KEY_DUPLICATED/i.test(err?.message || err?.errorMessage || "")
+      /SESSION_REVOKED|AUTH_KEY_DUPLICATED|AUTH_KEY_UNREGISTERED/i.test(err?.message || err?.errorMessage || "") ||
+      err?.code === 406
     ) {
+      console.warn(`[TelegramClient] Session for user ${userId} invalidated by Telegram:`, err?.message);
       evictClientForUser(userId);
+      const authErr: any = new Error("Telegram session was invalidated by Telegram security (AUTH_KEY_DUPLICATED). Please log in again.");
+      authErr.status = 401;
+      authErr.code = "SESSION_EXPIRED";
+      throw authErr;
     }
     throw err;
   }

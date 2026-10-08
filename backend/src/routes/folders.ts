@@ -194,9 +194,14 @@ router.post("/:folderId/sync", async (req: AuthedRequest, res) => {
     res.json({ ok: true, importedCount: result.importedCount, files: result.files });
   } catch (err: any) {
     console.error(`[Sync] Failed to sync folder ${folderId}:`, err);
-    if (/AUTH_KEY_DUPLICATED/i.test(err?.message || "") || err?.code === 406) {
-      return res.status(409).json({
-        error: "Telegram session is active on another instance (e.g. Local computer vs Render hosting). Please stop other running instances or wait a moment and try again."
+    if (
+      /AUTH_KEY_DUPLICATED|SESSION_REVOKED/i.test(err?.message || "") ||
+      err?.code === 406 ||
+      err?.status === 401
+    ) {
+      return res.status(401).json({
+        error: "Your Telegram session was invalidated by Telegram security (AUTH_KEY_DUPLICATED). Please log in again to generate a fresh session key.",
+        code: "SESSION_EXPIRED"
       });
     }
     res.status(500).json({ error: err.message || "Failed to sync folder with Telegram" });
