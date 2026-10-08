@@ -24,6 +24,22 @@ router.post("/verify-code", async (req, res) => {
       return res.json({ status: "need_password" });
     }
     const token = jwt.sign({ userId: result.userId }, process.env.JWT_SECRET!, { expiresIn: "30d" });
+
+    // Immediately upload database backup to Telegram so restarts never lose this login!
+    (async () => {
+      try {
+        const { getClientForUser } = await import("../telegram/client");
+        const client = await getClientForUser(result.userId);
+        if (client) {
+          const { backupDbToTelegram } = await import("../services/dbBackup");
+          await backupDbToTelegram(client);
+          console.log("[Auth] Immediately backed up database to Telegram after login verification.");
+        }
+      } catch (err: any) {
+        console.warn("[Auth] Post-login backup notice:", err?.message);
+      }
+    })();
+
     res.json({ status: "ok", token });
   } catch (err: any) {
     res.status(400).json({ error: err.message || "Invalid code" });
@@ -35,7 +51,24 @@ router.post("/verify-password", async (req, res) => {
   if (!phone || !password) return res.status(400).json({ error: "phone and password are required" });
   try {
     const result = await submitLoginPassword(phone, password);
-    const token = jwt.sign({ userId: (result as any).userId }, process.env.JWT_SECRET!, { expiresIn: "30d" });
+    const userId = (result as any).userId;
+    const token = jwt.sign({ userId }, process.env.JWT_SECRET!, { expiresIn: "30d" });
+
+    // Immediately upload database backup to Telegram so restarts never lose this login!
+    (async () => {
+      try {
+        const { getClientForUser } = await import("../telegram/client");
+        const client = await getClientForUser(userId);
+        if (client) {
+          const { backupDbToTelegram } = await import("../services/dbBackup");
+          await backupDbToTelegram(client);
+          console.log("[Auth] Immediately backed up database to Telegram after password verification.");
+        }
+      } catch (err: any) {
+        console.warn("[Auth] Post-password backup notice:", err?.message);
+      }
+    })();
+
     res.json({ status: "ok", token });
   } catch (err: any) {
     res.status(400).json({ error: err.message || "Invalid password" });

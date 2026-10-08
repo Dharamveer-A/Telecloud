@@ -42,58 +42,69 @@ process.on("uncaughtException", (err: any) => {
 });
 
 async function main() {
-  // ── Step 1: Restore DB from Telegram if running on Render (no persistent disk) ──
+  // ── Step 1: Restore DB from Telegram if bootstrap session is set ──
   // This MUST happen before initDb() / any sqlite access (sqlite uses lazy open).
-  if (process.env.RENDER === "true" || process.env.DB_BACKUP_ENABLED === "true") {
+  const bootstrapSession = process.env.BOOTSTRAP_TELEGRAM_SESSION;
+  if (bootstrapSession) {
     try {
-      const bootstrapSession = process.env.BOOTSTRAP_TELEGRAM_SESSION;
-      if (bootstrapSession) {
-        const { TelegramClient } = await import("telegram");
-        const { StringSession } = await import("telegram/sessions");
-        const { decryptSession } = await import("./utils/crypto");
+      const { TelegramClient } = await import("telegram");
+      const { StringSession } = await import("telegram/sessions");
+      const { decryptSession, encryptSession } = await import("./utils/crypto");
 
-        const apiId = parseInt(process.env.TELEGRAM_API_ID || "0", 10);
-        const apiHash = process.env.TELEGRAM_API_HASH || "";
+      const apiId = parseInt(process.env.TELEGRAM_API_ID || "0", 10);
+      const apiHash = process.env.TELEGRAM_API_HASH || "";
 
-        if (apiId && apiHash) {
-          let sessionStr = bootstrapSession;
-          try {
-            sessionStr = decryptSession(bootstrapSession);
-          } catch {
-            // Already plain session string
-          }
-          const bootstrapClient = new TelegramClient(
-            new StringSession(sessionStr),
-            apiId,
-            apiHash,
-            { connectionRetries: 3 }
-          );
-          await bootstrapClient.connect();
-          await restoreDbFromTelegram(bootstrapClient);
-          try {
-            const me = await bootstrapClient.getMe();
-            if (me) {
-              const { registerActiveClient } = await import("./telegram/client");
-              registerActiveClient(String(me.id), bootstrapClient);
-              console.log(`[Startup] Registered bootstrap client for user ${me.id} — preventing AUTH_KEY_DUPLICATED.`);
-            } else {
-              await bootstrapClient.disconnect().catch(() => {});
+      if (apiId && apiHash) {
+        let sessionStr = bootstrapSession;
+        try {
+          sessionStr = decryptSession(bootstrapSession);
+        } catch {
+          // Already plain session string
+        }
+        const bootstrapClient = new TelegramClient(
+          new StringSession(sessionStr),
+          apiId,
+          apiHash,
+          { connectionRetries: 3 }
+        );
+        await bootstrapClient.connect();
+        await restoreDbFromTelegram(bootstrapClient);
+        try {
+          const me = await bootstrapClient.getMe();
+          if (me) {
+            const { registerActiveClient } = await import("./telegram/client");
+            registerActiveClient(String(me.id), bootstrapClient);
+            console.log(`[Startup] Registered bootstrap client for user ${me.id} — preventing AUTH_KEY_DUPLICATED.`);
+
+            // Ensure user exists in database even if no backup existed yet!
+            const existingUser = db.users.get(String(me.id));
+            if (!existingUser) {
+              db.users.save({
+                id: String(me.id),
+                phone: (me as any).phone || "",
+                sessionString: encryptSession(sessionStr),
+                createdAt: Date.now(),
+              });
+              console.log(`[Startup] Auto-saved user ${me.id} in SQLite from bootstrap session.`);
+              backupDbToTelegram(bootstrapClient).catch(() => {});
             }
-          } catch {
+          } else {
             await bootstrapClient.disconnect().catch(() => {});
           }
-        } else {
-          console.warn("[DB Backup] TELEGRAM_API_ID/HASH not set — skipping restore.");
+        } catch {
+          await bootstrapClient.disconnect().catch(() => {});
         }
       } else {
-        console.log(
-          "[DB Backup] No BOOTSTRAP_TELEGRAM_SESSION set — starting fresh. " +
-            "Set this env var in Render to enable DB restore on restart."
-        );
+        console.warn("[DB Backup] TELEGRAM_API_ID/HASH not set — skipping restore.");
       }
     } catch (err: any) {
       console.warn("[DB Backup] Startup restore error (continuing):", err?.message);
     }
+  } else {
+    console.log(
+      "[DB Backup] No BOOTSTRAP_TELEGRAM_SESSION set — starting fresh. " +
+        "Set this env var in Render to enable DB restore on restart."
+    );
   }
 
   // ── Step 2: Initialize database (lazy sqlite opens here for the first time) ──
