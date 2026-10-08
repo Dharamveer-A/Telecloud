@@ -128,13 +128,41 @@ export async function restoreDbFromTelegram(client: TelegramClient): Promise<boo
     // Remember current user session strings on this server so restoring data doesn't
     // cause session collision (AUTH_KEY_DUPLICATED) between Local and Render.
     const userSessions = new Map<string, string>();
+    let currentFilesCount = 0;
+    let currentFoldersCount = 0;
     try {
       const { sqlite } = await import("../db/sqlite");
       const rows = sqlite.prepare("SELECT id, sessionString FROM users").all() as any[];
       for (const r of rows) {
         if (r.id && r.sessionString) userSessions.set(r.id, r.sessionString);
       }
+      currentFilesCount = (sqlite.prepare("SELECT count(*) as c FROM files").get() as any)?.c || 0;
+      currentFoldersCount = (sqlite.prepare("SELECT count(*) as c FROM folders").get() as any)?.c || 0;
     } catch {}
+
+    // Check backup's file and folder count:
+    let backupFilesCount = 0;
+    let backupFoldersCount = 0;
+    try {
+      const tempPath = path.join(DATA_DIR, `temp_backup_${Date.now()}.sqlite`);
+      fs.writeFileSync(tempPath, buffer);
+      const Database = (await import("better-sqlite3")).default;
+      const tempDb = new Database(tempPath);
+      backupFilesCount = (tempDb.prepare("SELECT count(*) as c FROM files").get() as any)?.c || 0;
+      backupFoldersCount = (tempDb.prepare("SELECT count(*) as c FROM folders").get() as any)?.c || 0;
+      tempDb.close();
+      try { fs.unlinkSync(tempPath); } catch {}
+    } catch {}
+
+    // CRITICAL SAFETY CHECK:
+    // If the database currently on disk has MORE files or folders than the Telegram backup,
+    // NEVER DOWNGRADE! The current disk has newer/more complete data!
+    if (currentFilesCount > backupFilesCount || (currentFilesCount === backupFilesCount && currentFoldersCount > backupFoldersCount)) {
+      console.log(`[DB Backup] Current database on disk is more complete (${currentFilesCount} files, ${currentFoldersCount} folders vs backup's ${backupFilesCount} files, ${backupFoldersCount} folders). Preserving current database and updating Telegram backup!`);
+      // Immediately upload the more complete local database to Telegram so Telegram gets updated!
+      backupDbToTelegram(client).catch(() => {});
+      return true;
+    }
 
     // Close existing SQLite instance and wipe stale WAL/SHM journals before overwriting db.sqlite
     try {
