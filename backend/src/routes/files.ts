@@ -353,6 +353,7 @@ router.get("/:fileId/download", async (req: AuthedRequest, res) => {
     const client = await getClientForUser(req.userId!);
     res.setHeader("Content-Type", file.mimeType || "application/octet-stream");
     res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(file.name)}"`);
+    res.setHeader("Cache-Control", "private, max-age=86400");
 
     // Range requests (what <video>/<audio> use for streaming + seeking)
     // are only safe to serve chunk-by-chunk for UNENCRYPTED files - AES-GCM
@@ -382,6 +383,7 @@ router.get("/:fileId/download", async (req: AuthedRequest, res) => {
       res.setHeader("Accept-Ranges", "bytes");
       res.setHeader("Content-Range", `bytes ${start}-${clampedEnd}/${file.size}`);
       res.setHeader("Content-Length", length.toString());
+      res.setHeader("Cache-Control", "private, max-age=86400");
       await streamFileRangeToResponse(client, file, res, start, clampedEnd);
       return;
     }

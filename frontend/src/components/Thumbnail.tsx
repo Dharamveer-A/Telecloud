@@ -9,7 +9,7 @@ interface ThumbnailProps {
 }
 
 // Module-level cache for blob object URLs so re-renders/navigation reuse cached images instantly
-const thumbBlobCache = new Map<string, string>();
+export const thumbBlobCache = new Map<string, string>();
 const failedThumbSet = new Set<string>();
 const retryListeners = new Set<() => void>();
 

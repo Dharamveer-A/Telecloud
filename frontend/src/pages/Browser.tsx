@@ -2515,8 +2515,20 @@ export default function Browser() {
         />
       )}
 
-      {preview && current && (
-        <PreviewModal file={preview} password={passwords[current.id]} onClose={() => setPreview(null)} />
+      {preview && (
+        <PreviewModal
+          file={preview}
+          files={sortedFiles}
+          password={preview.folderId ? passwords[preview.folderId] : (current ? passwords[current.id] : undefined)}
+          onClose={() => setPreview(null)}
+          onNavigate={(nextFile) => {
+            setPreview(nextFile as FileItem);
+            const idx = sortedFiles.findIndex((f) => f.id === nextFile.id);
+            if (idx >= visibleFileCount - 10) {
+              setVisibleFileCount((prev) => Math.min(sortedFiles.length, Math.max(prev, idx + 40)));
+            }
+          }}
+        />
       )}
 
       {shareTarget && (
