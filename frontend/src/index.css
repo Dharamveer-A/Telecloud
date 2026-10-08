@@ -219,3 +219,71 @@ html.light textarea::placeholder {
   color: #94A3B8 !important;
 }
 
+/* ==========================================================================
+   HIGH-TECH PREVIEW LOADER ANIMATIONS
+   Hardware-accelerated animations for captivating media loading
+   ========================================================================== */
+
+@keyframes holographic-scan {
+  0% {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  15% {
+    opacity: 0.9;
+  }
+  85% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: translateY(500%);
+    opacity: 0;
+  }
+}
+
+@keyframes pulse-ring {
+  0%, 100% {
+    transform: scale(0.96);
+    opacity: 0.45;
+  }
+  50% {
+    transform: scale(1.04);
+    opacity: 0.85;
+  }
+}
+
+@keyframes spin-reverse {
+  from {
+    transform: rotate(360deg);
+  }
+  to {
+    transform: rotate(0deg);
+  }
+}
+
+@keyframes shimmer-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(200%);
+  }
+}
+
+.animate-scan {
+  animation: holographic-scan 2.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.animate-spin-reverse {
+  animation: spin-reverse 7s linear infinite;
+}
+
+.animate-pulse-ring {
+  animation: pulse-ring 2.8s ease-in-out infinite;
+}
+
+.animate-shimmer-slide {
+  animation: shimmer-slide 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+

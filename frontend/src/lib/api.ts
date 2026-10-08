@@ -195,6 +195,13 @@ export const api = {
     const qs = params.toString();
     return `${BASE}/files/${id}/download${qs ? `?${qs}` : ""}`;
   },
+  filePreviewUrl: (id: string, password?: string, includeToken = true) => {
+    const params = new URLSearchParams();
+    if (password) params.set("password", password);
+    if (includeToken) params.set("token", localStorage.getItem("telecloud_token") || "");
+    const qs = params.toString();
+    return `${BASE}/files/${id}/preview${qs ? `?${qs}` : ""}`;
+  },
   thumbnailUrl: (id: string, password?: string) => {
     const params = new URLSearchParams();
     if (password) params.set("password", password);

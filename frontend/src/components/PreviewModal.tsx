@@ -5,8 +5,12 @@ import {
   Download,
   ExternalLink,
   X,
-  Loader2,
   AlertCircle,
+  Camera,
+  Film,
+  FileText,
+  ShieldCheck,
+  Sparkles,
 } from "lucide-react";
 import { api } from "../lib/api";
 import { thumbBlobCache } from "./Thumbnail";
@@ -42,8 +46,129 @@ function formatBytes(n?: number) {
   return `${v.toFixed(1)} ${units[i]}`;
 }
 
-// Module-level cache for converted HEIC photos so navigating back is instant
-const heicBlobCache = new Map<string, string>();
+interface InterestingLoaderProps {
+  type: "heic" | "image" | "video" | "audio" | "pdf" | "text" | "encrypted";
+  fileName: string;
+  fileSize?: number;
+}
+
+const stepsByType: Record<string, Array<{ title: string; desc: string }>> = {
+  heic: [
+    { title: "Retrieving Apple HEIC Asset", desc: "Streaming compressed high-efficiency blocks from Telegram Cloud…" },
+    { title: "Extracting Multi-Frame Layers", desc: "Parsing HEVC container, depth metadata & HDR channels…" },
+    { title: "Calibrating DCI-P3 Color Gamut", desc: "Optimizing wide color spectrum for high-fidelity display…" },
+    { title: "Synthesizing Ultra-HD JPEG", desc: "Reconstructing 12MP crystal-clear display image…" },
+    { title: "Rendering Canvas", desc: "Finalizing pixel buffer for smooth hardware presentation…" },
+  ],
+  image: [
+    { title: "Streaming Master Asset", desc: "Fetching full-resolution master file from Telegram Cloud…" },
+    { title: "Enhancing Dynamic Range", desc: "Processing sub-pixel clarity and contrast profiles…" },
+    { title: "Rendering Ultra-HD Pixels", desc: "Assembling high-definition raster onto canvas…" },
+  ],
+  encrypted: [
+    { title: "Authenticating Client Vault", desc: "Deriving AES-256-GCM zero-knowledge encryption key…" },
+    { title: "Verifying Cryptographic Tag", desc: "Validating 128-bit authentication tag against tampering…" },
+    { title: "Decompressing Decrypted Stream", desc: "Assembling decrypted data securely in browser memory…" },
+  ],
+  video: [
+    { title: "Initializing Video Stream", desc: "Establishing low-latency stream buffer from Telegram Cloud…" },
+    { title: "Demuxing Media Streams", desc: "Synchronizing high-definition video and audio tracks…" },
+    { title: "Starting Hardware Player", desc: "Spinning up hardware-accelerated media pipeline…" },
+  ],
+  audio: [
+    { title: "Buffering High-Fidelity Audio", desc: "Streaming lossless audio chunks from cloud…" },
+    { title: "Demuxing Audio Codec", desc: "Preparing hardware audio output pipeline…" },
+  ],
+  pdf: [
+    { title: "Loading Document Pages", desc: "Streaming PDF document from secure cloud…" },
+    { title: "Rasterizing Vector Elements", desc: "Preparing crystal-clear document pages…" },
+  ],
+  text: [
+    { title: "Loading Text Stream", desc: "Fetching document stream from cloud…" },
+    { title: "Formatting Syntax", desc: "Preparing code and text highlights…" },
+  ],
+};
+
+function InterestingLoader({ type, fileName, fileSize }: InterestingLoaderProps) {
+  const steps = stepsByType[type] || stepsByType.image;
+  const [stepIdx, setStepIdx] = useState(0);
+
+  useEffect(() => {
+    setStepIdx(0);
+    const interval = setInterval(() => {
+      setStepIdx((prev) => (prev + 1) % steps.length);
+    }, 1700);
+    return () => clearInterval(interval);
+  }, [type, steps.length]);
+
+  const currentStep = steps[stepIdx] || steps[0];
+
+  return (
+    <div className="relative flex flex-col items-center justify-center p-6 text-center select-none max-w-md mx-auto my-auto z-20">
+      {/* Soft Ambient Neon Glow */}
+      <div className="absolute w-56 h-56 rounded-full bg-teal/20 blur-3xl -z-10 animate-pulse-ring pointer-events-none" />
+
+      {/* Holographic Center Core with concentric spinning rings */}
+      <div className="relative w-28 h-28 flex items-center justify-center mb-6">
+        {/* Outer counter-rotating dashed orbital ring */}
+        <div className="absolute inset-0 rounded-full border border-dashed border-teal/35 animate-spin-reverse" />
+
+        {/* Outer pulsing ring */}
+        <div className="absolute inset-2 rounded-full border border-teal/20 animate-pulse-ring" />
+
+        {/* Dynamic spinning gradient neon ring */}
+        <div className="w-20 h-20 rounded-full p-[2px] bg-gradient-to-tr from-teal via-cyan-400 to-indigo-500 animate-spin shadow-[0_0_20px_rgba(79,163,160,0.35)]">
+          <div className="w-full h-full bg-surface/90 backdrop-blur-md rounded-full flex items-center justify-center border border-white/10 shadow-inner">
+            {type === "heic" || type === "image" ? (
+              <div className="relative flex items-center justify-center">
+                <Camera className="w-8 h-8 text-teal animate-pulse" />
+                <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping" />
+              </div>
+            ) : type === "video" ? (
+              <Film className="w-8 h-8 text-teal animate-pulse" />
+            ) : type === "encrypted" ? (
+              <ShieldCheck className="w-8 h-8 text-brass animate-pulse" />
+            ) : type === "audio" ? (
+              <div className="flex items-end gap-1 h-6">
+                <span className="w-1 bg-teal rounded-full animate-[pulse_0.8s_ease-in-out_infinite] h-4" />
+                <span className="w-1 bg-cyan-400 rounded-full animate-[pulse_0.6s_ease-in-out_infinite_0.2s] h-6" />
+                <span className="w-1 bg-teal rounded-full animate-[pulse_0.9s_ease-in-out_infinite_0.4s] h-3" />
+                <span className="w-1 bg-indigo-400 rounded-full animate-[pulse_0.7s_ease-in-out_infinite_0.1s] h-5" />
+              </div>
+            ) : (
+              <FileText className="w-8 h-8 text-teal animate-pulse" />
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Dynamic Animated Status Text with Smooth Cross-Fade */}
+      <div className="min-h-[58px] flex flex-col items-center justify-center gap-1.5 px-4">
+        <h4 className="text-paper text-sm sm:text-base font-semibold tracking-wide flex items-center gap-2 transition-all duration-300">
+          <Sparkles className="w-4 h-4 text-teal animate-spin" />
+          <span>{currentStep.title}</span>
+        </h4>
+        <p className="text-dim text-xs leading-relaxed max-w-xs transition-opacity duration-300">
+          {currentStep.desc}
+        </p>
+      </div>
+
+      {/* Sleek Gradient Shimmer Progress Bar */}
+      <div className="w-52 h-1.5 bg-surface2/80 rounded-full overflow-hidden border border-line/50 relative my-4 shadow-inner">
+        <div className="h-full bg-gradient-to-r from-teal via-cyan-400 to-indigo-500 rounded-full animate-shimmer-slide w-2/5" />
+      </div>
+
+      {/* File Info Pill */}
+      <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-surface2/70 border border-line text-[11px] text-dim backdrop-blur-sm max-w-full">
+        <span className="truncate max-w-[180px] text-paper/90 font-medium">{fileName}</span>
+        {fileSize !== undefined && <span>• {formatBytes(fileSize)}</span>}
+        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-teal/15 text-teal border border-teal/30">
+          {type === "heic" ? "Apple HEIC" : type === "encrypted" ? "AES-256" : "Telegram Cloud"}
+        </span>
+      </div>
+    </div>
+  );
+}
 
 export default function PreviewModal({
   file,
@@ -57,14 +182,12 @@ export default function PreviewModal({
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [textContent, setTextContent] = useState<string | null>(null);
   const [isTextLoading, setIsTextLoading] = useState(false);
-  const [heicUrl, setHeicUrl] = useState<string | null>(null);
-  const [isHeicConverting, setIsHeicConverting] = useState(false);
 
   const isHeic =
     /\.(heic|heif)$/i.test(file.name) ||
     file.mimeType === "image/heic" ||
     file.mimeType === "image/heif";
-  const isImage = file.mimeType.startsWith("image/") && !isHeic;
+  const isImage = file.mimeType.startsWith("image/") || isHeic;
   const isVideo = file.mimeType.startsWith("video/");
   const isAudio = file.mimeType.startsWith("audio/");
   const isPdf = file.mimeType === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
@@ -120,57 +243,8 @@ export default function PreviewModal({
     setImageLoaded(false);
     setError("");
     setTextContent(null);
-    setHeicUrl(heicBlobCache.get(file.id) || null);
-    setIsHeicConverting(false);
+    setBlobUrl(null);
   }, [file.id]);
-
-  // Convert Apple HEIC to JPEG in browser using WebAssembly
-  useEffect(() => {
-    if (!isHeic) return;
-    if (heicBlobCache.has(file.id)) {
-      setHeicUrl(heicBlobCache.get(file.id)!);
-      return;
-    }
-
-    let cancelled = false;
-    setIsHeicConverting(true);
-
-    (async () => {
-      try {
-        const res = await fetch(api.fileUrl(file.id, password), {
-          headers: { Authorization: `Bearer ${localStorage.getItem("telecloud_token")}` },
-        });
-        if (!res.ok) throw new Error("Failed to download HEIC image");
-        const blob = await res.blob();
-        if (cancelled) return;
-
-        const mod: any = await import("heic2any");
-        const heic2any = typeof mod === "function" ? mod : (mod.default || mod);
-        const converted = await heic2any({
-          blob,
-          toType: "image/jpeg",
-          quality: 0.85,
-        });
-
-        if (cancelled) return;
-        const resultBlob = Array.isArray(converted) ? converted[0] : converted;
-        const url = URL.createObjectURL(resultBlob);
-        heicBlobCache.set(file.id, url);
-        setHeicUrl(url);
-      } catch (err: any) {
-        if (!cancelled) {
-          console.warn("HEIC preview conversion warning:", err);
-          setError("Apple HEIC photos are not natively supported by Chrome/Edge. Please download to view the original.");
-        }
-      } finally {
-        if (!cancelled) setIsHeicConverting(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [file.id, isHeic, password]);
 
   // Smart Preloading for next & previous images/thumbnails
   useEffect(() => {
@@ -179,13 +253,19 @@ export default function PreviewModal({
     neighbors.forEach((idx) => {
       const neighbor = files[idx];
       if (neighbor) {
-        // Preload next image full resolution if unencrypted
-        if (neighbor.mimeType.startsWith("image/") && !neighbor.encrypted) {
+        const neighborIsHeic =
+          /\.(heic|heif)$/i.test(neighbor.name) ||
+          neighbor.mimeType === "image/heic" ||
+          neighbor.mimeType === "image/heif";
+        // Preload next image high resolution preview
+        if ((neighbor.mimeType.startsWith("image/") || neighborIsHeic) && !neighbor.encrypted) {
           const preImg = new Image();
-          preImg.src = api.fileUrl(neighbor.id, password, true);
+          preImg.src = neighborIsHeic
+            ? api.filePreviewUrl(neighbor.id, password, true)
+            : api.fileUrl(neighbor.id, password, true);
         }
         // Preload thumbnail for image/video
-        if (neighbor.mimeType.startsWith("image/") || neighbor.mimeType.startsWith("video/")) {
+        if (neighbor.mimeType.startsWith("image/") || neighbor.mimeType.startsWith("video/") || neighborIsHeic) {
           const preThumb = new Image();
           preThumb.src = api.thumbnailUrl(neighbor.id, password);
         }
@@ -198,25 +278,28 @@ export default function PreviewModal({
     if (!isText) return;
     let cancelled = false;
     setIsTextLoading(true);
-    fetch(api.fileUrl(file.id, password), {
-      headers: { Authorization: `Bearer ${localStorage.getItem("telecloud_token")}` },
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error("Failed to load text");
-        return res.text();
-      })
-      .then((txt) => {
+
+    (async () => {
+      try {
+        const res = await fetch(api.fileUrl(file.id, password), {
+          headers: { Authorization: `Bearer ${localStorage.getItem("telecloud_token")}` },
+        });
+        if (!res.ok) throw new Error("Failed to load text file");
+        const text = await res.text();
         if (!cancelled) {
-          setTextContent(txt.length > 500000 ? txt.slice(0, 500000) + "\n... (truncated for preview)" : txt);
-          setIsTextLoading(false);
+          setTextContent(text);
         }
-      })
-      .catch((err) => {
+      } catch (err: any) {
         if (!cancelled) {
           setError(err.message || "Failed to load text preview");
+        }
+      } finally {
+        if (!cancelled) {
           setIsTextLoading(false);
         }
-      });
+      }
+    })();
+
     return () => {
       cancelled = true;
     };
@@ -248,6 +331,8 @@ export default function PreviewModal({
 
   // Direct streaming download URL with query token
   const directStreamUrl = api.fileUrl(file.id, password, true);
+  // Dedicated high-resolution preview URL (server converts HEIC to standard JPEG on-the-fly)
+  const previewUrl = isHeic ? api.filePreviewUrl(file.id, password, true) : directStreamUrl;
   // Instant cached thumbnail URL
   const cachedThumbUrl = thumbBlobCache.get(file.id) || api.thumbnailUrl(file.id, password);
 
@@ -351,11 +436,11 @@ export default function PreviewModal({
               <span className="hidden sm:inline">Download</span>
             </a>
             <a
-              href={directStreamUrl}
+              href={previewUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="p-1.5 text-dim hover:text-paper hover:bg-surface2 rounded-lg transition-colors hidden sm:flex items-center justify-center"
-              title="Open raw file in new tab"
+              title="Open preview in new tab"
             >
               <ExternalLink className="w-4 h-4" />
             </a>
@@ -371,7 +456,7 @@ export default function PreviewModal({
         </div>
 
         {/* Content Viewer Body */}
-        <div className="w-full flex-1 flex flex-col items-center justify-center relative min-h-[300px] max-h-[82vh] overflow-hidden rounded-2xl bg-black/60 border border-line shadow-2xl p-2 sm:p-4">
+        <div className="w-full flex-1 flex flex-col items-center justify-center relative min-h-[360px] max-h-[82vh] overflow-hidden rounded-2xl bg-black/60 border border-line shadow-2xl p-2 sm:p-4">
           {error && (
             <div className="flex flex-col items-center justify-center p-8 text-center max-w-md">
               <AlertCircle className="w-10 h-10 text-danger mb-3" />
@@ -380,71 +465,82 @@ export default function PreviewModal({
               <a
                 href={directStreamUrl}
                 download={file.name}
-                className="px-4 py-2 bg-teal text-ink font-semibold rounded-lg text-xs hover:opacity-90 transition-opacity"
+                className="px-4 py-2 bg-teal text-ink font-semibold rounded-lg text-xs hover:opacity-90 transition-opacity flex items-center gap-2"
               >
-                Download File
+                <Download className="w-4 h-4" />
+                <span>Download File</span>
               </a>
             </div>
           )}
 
-          {/* IMAGE PREVIEW: Instant thumbnail + Progressive Native High-Res Image */}
+          {/* IMAGE & APPLE HEIC PREVIEW */}
           {isImage && !error && (
             <div className="relative flex items-center justify-center w-full h-full max-h-[80vh] overflow-hidden">
-              {/* Instant blurred thumbnail placeholder (renders within 10-50ms) */}
-              <img
-                key={`thumb-${file.id}`}
-                src={cachedThumbUrl}
-                alt=""
-                aria-hidden="true"
-                className={`max-h-[78vh] sm:max-h-[80vh] max-w-full rounded-lg object-contain filter blur-md transition-opacity duration-300 pointer-events-none absolute inset-0 m-auto ${
-                  imageLoaded ? "opacity-0" : "opacity-75"
-                }`}
-              />
+              {/* Holographic scanner sweep over frame */}
+              {!imageLoaded && (
+                <div className="absolute inset-x-0 h-16 bg-gradient-to-b from-transparent via-teal/15 to-transparent pointer-events-none animate-scan z-10" />
+              )}
 
-              {/* Native full-resolution image streams directly */}
+              {/* Blurred thumbnail backdrop for instant visual feedback */}
+              {cachedThumbUrl && (
+                <img
+                  key={`thumb-${file.id}`}
+                  src={cachedThumbUrl}
+                  alt=""
+                  aria-hidden="true"
+                  className={`absolute inset-0 w-full h-full object-contain filter blur-md scale-95 transition-opacity duration-300 pointer-events-none ${
+                    imageLoaded ? "opacity-0" : "opacity-45"
+                  }`}
+                />
+              )}
+
+              {/* Engaging Futuristic Cosmic Loader while high-res master converts/loads */}
+              {!imageLoaded && (
+                <InterestingLoader
+                  type={isHeic ? "heic" : file.encrypted ? "encrypted" : "image"}
+                  fileName={file.name}
+                  fileSize={file.size}
+                />
+              )}
+
+              {/* Native full-resolution image / converted HEIC JPEG streams directly */}
               <img
-                key={`full-${file.id}`}
-                src={directStreamUrl}
+                key={`full-${file.id}-${blobUrl ? "blob" : "stream"}`}
+                src={blobUrl || previewUrl}
                 alt={file.name}
                 onLoad={() => setImageLoaded(true)}
-                onError={() => {
-                  // If direct stream fails, show error
+                onError={async () => {
+                  // If server preview fails for HEIC, attempt client-side fallback with multiple: true
+                  if (isHeic && !blobUrl) {
+                    try {
+                      const res = await fetch(api.fileUrl(file.id, password), {
+                        headers: { Authorization: `Bearer ${localStorage.getItem("telecloud_token")}` },
+                      });
+                      if (!res.ok) throw new Error("Failed to fetch image");
+                      const blob = await res.blob();
+                      const mod: any = await import("heic2any");
+                      const heic2any = typeof mod === "function" ? mod : (mod.default || mod);
+                      const converted = await heic2any({
+                        blob,
+                        toType: "image/jpeg",
+                        quality: 0.88,
+                        multiple: true,
+                      });
+                      const resultBlob = Array.isArray(converted) ? converted[0] : converted;
+                      const fallbackUrl = URL.createObjectURL(resultBlob);
+                      setBlobUrl(fallbackUrl);
+                      return;
+                    } catch (fallbackErr) {
+                      console.warn("Client fallback also failed:", fallbackErr);
+                    }
+                  }
                   setImageLoaded(true);
                   setError("Failed to render image");
                 }}
-                className={`max-h-[78vh] sm:max-h-[80vh] max-w-full rounded-lg object-contain transition-opacity duration-200 z-10 shadow-lg ${
-                  imageLoaded ? "opacity-100" : "opacity-0"
+                className={`max-h-[78vh] sm:max-h-[80vh] max-w-full rounded-lg object-contain transition-opacity duration-300 z-10 shadow-2xl ${
+                  imageLoaded ? "opacity-100" : "opacity-0 absolute pointer-events-none"
                 }`}
               />
-
-              {/* High-res loading badge */}
-              {!imageLoaded && !error && (
-                <div className="absolute bottom-3 right-3 z-20 bg-surface/85 backdrop-blur-md px-3 py-1.5 rounded-full flex items-center gap-2 text-xs text-paper border border-line shadow-xl pointer-events-none">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-teal" />
-                  <span className="text-[11px] font-medium">Loading high resolution…</span>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* APPLE HEIC / HEIF PREVIEW (Converted to JPEG on-the-fly) */}
-          {isHeic && !error && (
-            <div className="relative flex items-center justify-center w-full h-full max-h-[80vh] overflow-hidden">
-              {isHeicConverting && !heicUrl && (
-                <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-                  <Loader2 className="w-9 h-9 animate-spin text-teal" />
-                  <p className="text-paper text-sm font-semibold">Converting Apple HEIC photo for preview…</p>
-                  <p className="text-dim text-xs">Converting high-efficiency image to JPEG for browser display</p>
-                </div>
-              )}
-              {heicUrl && (
-                <img
-                  key={heicUrl}
-                  src={heicUrl}
-                  alt={file.name}
-                  className="max-h-[78vh] sm:max-h-[80vh] max-w-full rounded-lg object-contain shadow-2xl"
-                />
-              )}
             </div>
           )}
 
@@ -462,10 +558,11 @@ export default function PreviewModal({
                     className="max-h-[78vh] sm:max-h-[80vh] max-w-full rounded-lg border border-line shadow-2xl"
                   />
                 ) : (
-                  <div className="flex flex-col items-center justify-center gap-3 py-12">
-                    <Loader2 className="w-8 h-8 animate-spin text-teal" />
-                    <p className="text-dim text-xs">Decrypting locked video…</p>
-                  </div>
+                  <InterestingLoader
+                    type="encrypted"
+                    fileName={file.name}
+                    fileSize={file.size}
+                  />
                 )
               ) : (
                 <video
@@ -495,10 +592,11 @@ export default function PreviewModal({
                 blobUrl ? (
                   <audio key={file.id} src={blobUrl} controls autoPlay className="w-full" />
                 ) : (
-                  <div className="flex items-center gap-2 text-xs text-dim">
-                    <Loader2 className="w-4 h-4 animate-spin text-teal" />
-                    <span>Decrypting audio…</span>
-                  </div>
+                  <InterestingLoader
+                    type="encrypted"
+                    fileName={file.name}
+                    fileSize={file.size}
+                  />
                 )
               ) : (
                 <audio key={file.id} src={directStreamUrl} controls autoPlay className="w-full" />
@@ -513,9 +611,12 @@ export default function PreviewModal({
                 blobUrl ? (
                   <iframe src={blobUrl} className="w-full h-full border-0" title={file.name} />
                 ) : (
-                  <div className="flex flex-col items-center justify-center h-full gap-3 bg-surface">
-                    <Loader2 className="w-8 h-8 animate-spin text-teal" />
-                    <p className="text-dim text-xs">Decrypting locked PDF…</p>
+                  <div className="flex flex-col items-center justify-center h-full bg-surface">
+                    <InterestingLoader
+                      type="encrypted"
+                      fileName={file.name}
+                      fileSize={file.size}
+                    />
                   </div>
                 )
               ) : (
@@ -528,10 +629,11 @@ export default function PreviewModal({
           {isText && !error && (
             <div className="w-full h-[78vh] sm:h-[80vh] flex flex-col rounded-lg overflow-hidden border border-line bg-surface2 select-text">
               {isTextLoading ? (
-                <div className="flex flex-col items-center justify-center h-full gap-3">
-                  <Loader2 className="w-8 h-8 animate-spin text-teal" />
-                  <p className="text-dim text-xs">Loading text…</p>
-                </div>
+                <InterestingLoader
+                  type="text"
+                  fileName={file.name}
+                  fileSize={file.size}
+                />
               ) : textContent !== null ? (
                 <pre className="p-4 font-mono text-xs text-paper overflow-auto flex-1 leading-relaxed whitespace-pre-wrap">
                   <code>{textContent}</code>

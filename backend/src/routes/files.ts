@@ -228,7 +228,11 @@ router.get("/:fileId/thumbnail", async (req: AuthedRequest, res) => {
   const file = db.files.get(fileId);
   if (!file) return res.status(404).json({ error: "File not found" });
 
-  const isImage = file.mimeType?.startsWith("image/");
+  const isHeic =
+    /\.(heic|heif)$/i.test(file.name) ||
+    file.mimeType?.includes("heic") ||
+    file.mimeType?.includes("heif");
+  const isImage = file.mimeType?.startsWith("image/") || isHeic;
   const isVideo = file.mimeType?.startsWith("video/");
   if (!isImage && !isVideo) {
     return res.status(404).json({ error: "No thumbnail for this file type" });
@@ -243,14 +247,23 @@ router.get("/:fileId/thumbnail", async (req: AuthedRequest, res) => {
   const cacheDir = path.join(process.env.DATA_DIR || "./data", "thumbnails");
   await fs.mkdir(cacheDir, { recursive: true });
   const cachePath = path.join(cacheDir, `${file.id}.jpg`);
+  const heicPreviewPath = path.join(cacheDir, `heic_preview_${file.id}.jpg`);
 
-  // 1. Check disk cache
+  // 1. Check disk cache (both standard thumbnail and converted HEIC preview)
   try {
     const stat = await fs.stat(cachePath);
     if (stat.isFile() && stat.size > 0) {
       res.setHeader("Content-Type", "image/jpeg");
       res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
       return res.sendFile(path.resolve(cachePath));
+    }
+  } catch {}
+  try {
+    const stat = await fs.stat(heicPreviewPath);
+    if (stat.isFile() && stat.size > 0) {
+      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
+      return res.sendFile(path.resolve(heicPreviewPath));
     }
   } catch {}
 
@@ -331,6 +344,138 @@ router.get("/:fileId/thumbnail", async (req: AuthedRequest, res) => {
   // Short failure cache (15 seconds) so transient network delays can recover quickly
   failedThumbnailCache.set(fileId, Date.now() + 15000);
   return res.status(404).json({ error: "Thumbnail not available" });
+});
+
+const inFlightPreviews = new Map<string, Promise<Buffer | null>>();
+
+router.get("/:fileId/preview", async (req: AuthedRequest, res) => {
+  const file = db.files.get(req.params.fileId);
+  if (!file) return res.status(404).json({ error: "File not found" });
+
+  const isHeic =
+    /\.(heic|heif)$/i.test(file.name) ||
+    file.mimeType?.includes("heic") ||
+    file.mimeType?.includes("heif");
+
+  const folder = db.folders.get(file.folderId);
+  let fileKey: Buffer | undefined;
+  if (folder?.locked) {
+    const password = (req.query.password as string) || "";
+    if (!folder.passwordHash || !folder.salt || !verifyFolderPassword(password, folder.passwordHash, folder.salt)) {
+      return res.status(403).json({ error: "Wrong or missing folder password" });
+    }
+    fileKey = deriveFolderFileKey(password, folder.salt);
+  }
+
+  // Apple HEIC photos: Convert to ultra-crisp JPEG once on the server and cache permanently
+  if (isHeic) {
+    const cacheDir = path.join(process.env.DATA_DIR || "./data", "thumbnails");
+    await fs.mkdir(cacheDir, { recursive: true });
+    const cachePath = path.join(cacheDir, `heic_preview_${file.id}.jpg`);
+    const thumbPath = path.join(cacheDir, `${file.id}.jpg`);
+
+    // 1. Check disk cache
+    try {
+      const stat = await fs.stat(cachePath);
+      if (stat.isFile() && stat.size > 0) {
+        res.setHeader("Content-Type", "image/jpeg");
+        res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
+        return res.sendFile(path.resolve(cachePath));
+      }
+    } catch {}
+
+    // Deduplicate concurrent conversions for the same HEIC file
+    let convertPromise = inFlightPreviews.get(file.id);
+    if (!convertPromise) {
+      convertPromise = (async () => {
+        try {
+          const client = await getClientForUser(req.userId!);
+          const rawBuf = await downloadFile(client, file, fileKey);
+          if (!rawBuf || rawBuf.length === 0) return null;
+
+          const convert = require("heic-convert");
+          const jpegBuf: Buffer = await convert({
+            buffer: rawBuf,
+            format: "JPEG",
+            quality: 0.88,
+          });
+
+          await fs.writeFile(cachePath, jpegBuf).catch(() => {});
+          await fs.writeFile(thumbPath, jpegBuf).catch(() => {});
+          return jpegBuf;
+        } catch (err: any) {
+          console.error(`[HEIC Preview] Conversion failed for ${file.name} (${file.id}):`, err?.message || err);
+          return null;
+        } finally {
+          inFlightPreviews.delete(file.id);
+        }
+      })();
+      inFlightPreviews.set(file.id, convertPromise);
+    }
+
+    const converted = await convertPromise;
+    if (converted && converted.length > 0) {
+      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
+      return res.send(converted);
+    }
+
+    return res.status(500).json({ error: "Failed to convert HEIC image for preview" });
+  }
+
+  // Non-HEIC files: Stream with inline disposition (supporting HTTP 206 Range requests)
+  const rangeHeader = req.headers.range;
+
+  try {
+    const client = await getClientForUser(req.userId!);
+    res.setHeader("Content-Type", file.mimeType || "application/octet-stream");
+    res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(file.name)}"`);
+    res.setHeader("Cache-Control", "private, max-age=86400");
+
+    if (rangeHeader && !file.encrypted) {
+      const match = /bytes=(\d*)-(\d*)/.exec(rangeHeader);
+      const start = match?.[1] ? parseInt(match[1], 10) : 0;
+      const burstSize = getRangeBurstSize(file.mimeType, file.name);
+      const rawEnd = match?.[2]
+        ? parseInt(match[2], 10)
+        : (burstSize ? start + burstSize - 1 : file.size - 1);
+      const clampedEnd = burstSize
+        ? Math.min(rawEnd, start + burstSize - 1, file.size - 1)
+        : Math.min(rawEnd, file.size - 1);
+
+      if (start > clampedEnd || start >= file.size) {
+        res.status(416);
+        res.setHeader("Content-Range", `bytes */${file.size}`);
+        return;
+      }
+
+      const length = clampedEnd - start + 1;
+
+      res.status(206);
+      res.setHeader("Accept-Ranges", "bytes");
+      res.setHeader("Content-Range", `bytes ${start}-${clampedEnd}/${file.size}`);
+      res.setHeader("Content-Length", length.toString());
+      res.setHeader("Cache-Control", "private, max-age=86400");
+      await streamFileRangeToResponse(client, file, res, start, clampedEnd);
+      return;
+    }
+
+    res.setHeader("Accept-Ranges", file.encrypted ? "none" : "bytes");
+    await streamFileToResponse(client, file, res, fileKey);
+  } catch (err: any) {
+    if (
+      /SESSION_REVOKED|AUTH_KEY_DUPLICATED|AUTH_KEY_UNREGISTERED/i.test(err?.message || err?.errorMessage || "") ||
+      err?.code === 406 ||
+      err?.status === 401
+    ) {
+      evictClientForUser(req.userId!);
+      return res.status(401).json({
+        error: "Telegram session was invalidated. Please log in again to reconnect.",
+        code: "SESSION_EXPIRED"
+      });
+    }
+    res.status(500).json({ error: err.message || "Preview failed" });
+  }
 });
 
 router.get("/:fileId/download", async (req: AuthedRequest, res) => {
