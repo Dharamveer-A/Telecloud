@@ -24,4 +24,4 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
           cd worker
-          npx vercel --prod --yes --token "$VERCEL_TOKEN"
+          npx vercel --prod --yes --name=telecloud-media-worker --token="$VERCEL_TOKEN"
