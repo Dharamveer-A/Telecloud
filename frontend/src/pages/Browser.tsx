@@ -28,6 +28,7 @@ import {
   CheckSquare,
   Square,
   MinusSquare,
+  Key,
 } from "lucide-react";
 import { api, clearToken, saveBlob, computeFileSHA256 } from "../lib/api";
 import { itemsToTree, filesWithPathsToTree, DroppedNode, flattenFiles } from "../lib/dragDrop";
@@ -36,6 +37,7 @@ import { transferStore, useTransfers } from "../lib/transfers";
 import { useSelection } from "../lib/useSelection";
 import PasswordPrompt from "../components/PasswordPrompt";
 import PreviewModal from "../components/PreviewModal";
+import PersistenceModal from "../components/PersistenceModal";
 import Thumbnail, { clearThumbnailFailureCache } from "../components/Thumbnail";
 import GlobalContextMenu, { ContextMenuState } from "../components/GlobalContextMenu";
 import MoveDialog from "../components/MoveDialog";
@@ -204,6 +206,7 @@ export default function Browser() {
   const [pendingLock, setPendingLock] = useState<SubFolder | null>(null);
   const [passwordError, setPasswordError] = useState("");
   const [preview, setPreview] = useState<FileItem | null>(null);
+  const [showPersistenceModal, setShowPersistenceModal] = useState(false);
   const [error, setError] = useState("");
   const [isLoadingFolder, setIsLoadingFolder] = useState(false);
   const [visibleFileCount, setVisibleFileCount] = useState(80);
@@ -1446,7 +1449,15 @@ export default function Browser() {
             </button>
           </div>
         )}
-        <div className="pt-2 border-t border-line mt-auto">
+        <div className="pt-2 border-t border-line mt-auto flex flex-col gap-1">
+          <button
+            onClick={() => setShowPersistenceModal(true)}
+            className="w-full text-left px-2 py-1.5 rounded text-xs text-teal hover:bg-surface2 transition-colors flex items-center gap-1.5 font-medium"
+            title="Keep logged in across Render updates"
+          >
+            <Key className="w-3.5 h-3.5 shrink-0" />
+            <span>Stay Logged In</span>
+          </button>
           <button onClick={logout} className="w-full text-left px-2 py-1.5 rounded text-xs text-dim hover:text-paper hover:bg-surface2 transition-colors">Sign out</button>
         </div>
       </aside>
@@ -1631,8 +1642,19 @@ export default function Browser() {
             <div className="pt-3 border-t border-line mt-auto flex items-center justify-between">
               <ThemeToggle />
               <button
+                onClick={() => {
+                  setMobileDrawerOpen(false);
+                  setShowPersistenceModal(true);
+                }}
+                className="text-xs text-teal px-2 py-1.5 rounded hover:bg-surface2 transition-colors flex items-center gap-1 font-medium"
+                title="Stay logged in on Render"
+              >
+                <Key className="w-3.5 h-3.5" />
+                <span>Stay Logged In</span>
+              </button>
+              <button
                 onClick={logout}
-                className="text-xs text-dim hover:text-danger px-3 py-1.5 rounded hover:bg-surface2 transition-colors flex items-center gap-1.5"
+                className="text-xs text-dim hover:text-danger px-2.5 py-1.5 rounded hover:bg-surface2 transition-colors flex items-center gap-1.5"
               >
                 <LogOut className="w-4 h-4" />
                 <span>Sign out</span>
@@ -2529,6 +2551,10 @@ export default function Browser() {
             }
           }}
         />
+      )}
+
+      {showPersistenceModal && (
+        <PersistenceModal onClose={() => setShowPersistenceModal(false)} />
       )}
 
       {shareTarget && (

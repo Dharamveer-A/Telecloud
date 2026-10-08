@@ -102,15 +102,24 @@ async function finishLogin(phone: string, client: TelegramClient): Promise<Login
   const userId = me.id.toString();
   const sessionString = client.session.save() as unknown as string;
 
+  const encryptedSession = encryptSession(sessionString);
+
+  console.log("====================================================================");
+  console.log("🔑 [RENDER PERSISTENCE] To stay logged in permanently across Render deploys:");
+  console.log("Add this in Render Dashboard -> Environment variables:");
+  console.log("Key:   BOOTSTRAP_TELEGRAM_SESSION");
+  console.log(`Value: ${encryptedSession}`);
+  console.log("====================================================================");
+
   const existing = db.users.get(userId);
   if (existing) {
-    existing.sessionString = encryptSession(sessionString);
+    existing.sessionString = encryptedSession;
     db.users.save(existing);
   } else {
     db.users.save({
       id: userId,
       phone,
-      sessionString: encryptSession(sessionString),
+      sessionString: encryptedSession,
       createdAt: Date.now(),
     });
 

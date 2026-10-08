@@ -42,4 +42,25 @@ router.post("/verify-password", async (req, res) => {
   }
 });
 
+router.get("/bootstrap-session", async (req, res) => {
+  const header = req.headers.authorization;
+  const token = header?.startsWith("Bearer ") ? header.slice(7) : (req.query.token as string);
+  if (!token) return res.status(401).json({ error: "Not logged in" });
+
+  try {
+    const payload = jwt.verify(token, process.env.JWT_SECRET!) as { userId: string };
+    const { db } = await import("../db/db");
+    const user = db.users.get(payload.userId);
+    if (!user) return res.status(404).json({ error: "User not found in database" });
+
+    return res.json({
+      userId: user.id,
+      phone: user.phone,
+      bootstrapSession: user.sessionString,
+    });
+  } catch {
+    return res.status(401).json({ error: "Invalid session" });
+  }
+});
+
 export default router;

@@ -65,6 +65,7 @@ export const api = {
   requestCode: (phone: string) => request("/auth/request-code", { method: "POST", body: JSON.stringify({ phone }) }),
   verifyCode: (phone: string, code: string) => request("/auth/verify-code", { method: "POST", body: JSON.stringify({ phone, code }) }),
   verifyPassword: (phone: string, password: string) => request("/auth/verify-password", { method: "POST", body: JSON.stringify({ phone, password }) }),
+  getBootstrapSession: () => request("/auth/bootstrap-session"),
 
   getRoot: () => request("/folders/"),
   getAllFolders: () => request("/folders/tree/all"),
