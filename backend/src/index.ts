@@ -195,13 +195,53 @@ async function main() {
 
       fs.writeFileSync(DB_PATH, buffer);
       reloadSqlite();
-      purgeSystemBackups();
-
       console.log(`[DB Sync] ✅ Database snapshot pushed and applied successfully (${(buffer.length / 1024).toFixed(1)} KB).`);
+
+      // Immediately upload this new database to Telegram so Telegram has this latest 1703-file backup!
+      (async () => {
+        try {
+          const { db } = await import("./db/db");
+          const { getClientForUser } = await import("./telegram/client");
+          const { backupDbToTelegram } = await import("./services/dbBackup");
+          const users = db.users.all();
+          if (users.length > 0) {
+            const client = await getClientForUser(users[0].id);
+            if (client) {
+              await backupDbToTelegram(client);
+              console.log("[DB Sync] ✅ Uploaded latest pushed database directly to Telegram backup!");
+            }
+          }
+        } catch (err: any) {
+          console.warn("[DB Sync] Immediate Telegram backup notice:", err?.message);
+        }
+      })();
+
       return res.json({ ok: true, appliedBytes: buffer.length });
     } catch (err: any) {
       console.error("[DB Sync] Push DB error:", err);
       return res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // Explicitly trigger a Telegram backup of the current database (protected by JWT_SECRET)
+  app.post("/api/sync/backup-now", async (req, res) => {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : (req.query.token as string);
+    if (!token || token !== process.env.JWT_SECRET) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    try {
+      const { db } = await import("./db/db");
+      const { getClientForUser } = await import("./telegram/client");
+      const { backupDbToTelegram } = await import("./services/dbBackup");
+      const users = db.users.all();
+      if (users.length === 0) return res.status(400).json({ error: "No user found" });
+      const client = await getClientForUser(users[0].id);
+      if (!client) return res.status(500).json({ error: "Could not get Telegram client" });
+      await backupDbToTelegram(client);
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
     }
   });
 
