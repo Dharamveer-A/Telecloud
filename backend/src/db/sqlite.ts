@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
 import { UserRecord, FolderRecord, FileRecord, StorageModule, FileChunk, ShareRecord } from "./db";
+import { kajalPandeyFiles } from "./kajalPandeySeed";
 
 const DATA_DIR = process.env.DATA_DIR || "./data";
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -144,6 +145,54 @@ export function purgeSystemBackups(dbInstance?: any): void {
 
 // Automatically purge system backup files from tables on startup
 purgeSystemBackups(sqlite);
+
+export function ensureDemo2Subfolders(dbInstance?: any): void {
+  const instance = dbInstance || _sqliteInstance || sqlite;
+  if (!instance) return;
+
+  try {
+    const demo2 = instance.prepare("SELECT id FROM folders WHERE id = 'db0870ae-0542-475c-9c22-d7cbe2ced766' OR name = 'Demo 2'").get() as any;
+    if (demo2) {
+      instance.prepare(`
+        INSERT OR IGNORE INTO folders (id, parentId, name, createdAt, locked, passwordHash, salt, deletedAt, topicId)
+        VALUES ('8fde20ae-f36d-4087-8364-ba1409dc76c2', ?, 'Insta Exclusive', 1791313357789, 0, NULL, NULL, NULL, 4178)
+      `).run(demo2.id);
+
+      instance.prepare(`
+        INSERT OR IGNORE INTO folders (id, parentId, name, createdAt, locked, passwordHash, salt, deletedAt, topicId)
+        VALUES ('d7f23da7-3e0e-42d5-a825-a6ed3ab53259', '8fde20ae-f36d-4087-8364-ba1409dc76c2', 'Kajal Pandey', 1791313368000, 0, NULL, NULL, NULL, 4179)
+      `).run();
+
+      const insertStmt = instance.prepare(`
+        INSERT OR IGNORE INTO files (id, folderId, name, mimeType, size, createdAt, encrypted, iv, chunks, deletedAt, sha256)
+        VALUES (@id, @folderId, @name, @mimeType, @size, @createdAt, @encrypted, @iv, @chunks, @deletedAt, @sha256)
+      `);
+      const insertMany = instance.transaction((files: any[]) => {
+        for (const item of files) {
+          insertStmt.run({
+            id: item.id,
+            folderId: item.folderId,
+            name: item.name,
+            mimeType: item.mimeType,
+            size: item.size,
+            createdAt: item.createdAt,
+            encrypted: item.encrypted ? 1 : 0,
+            iv: item.iv || null,
+            chunks: typeof item.chunks === "string" ? item.chunks : JSON.stringify(item.chunks),
+            deletedAt: item.deletedAt || null,
+            sha256: item.sha256 || null,
+          });
+        }
+      });
+      insertMany(kajalPandeyFiles);
+    }
+  } catch (err: any) {
+    console.warn("[SQLite] ensureDemo2Subfolders warning:", err?.message);
+  }
+}
+
+// Ensure Demo 2 subfolders exist immediately
+ensureDemo2Subfolders(sqlite);
 
 // Check and perform automatic migration from db.json if database is empty
 export function migrateFromLowDbIfEmpty() {
@@ -404,6 +453,7 @@ export function reloadSqlite(): void {
   _sqliteInstance.pragma("synchronous = NORMAL");
   _sqliteInstance.pragma("foreign_keys = OFF");
   purgeSystemBackups(_sqliteInstance);
+  ensureDemo2Subfolders(_sqliteInstance);
   stmts = createStatements(_sqliteInstance);
 }
 

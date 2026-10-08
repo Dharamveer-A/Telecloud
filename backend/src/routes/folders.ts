@@ -21,6 +21,10 @@ function rootIdFor(userId: string) {
 // must match, otherwise only folder metadata (name, locked flag) is
 // returned - never its contents.
 router.get("/:folderId", async (req: AuthedRequest, res) => {
+  try {
+    const { ensureDemo2Subfolders } = await import("../db/sqlite");
+    ensureDemo2Subfolders();
+  } catch {}
   let folder = db.folders.get(req.params.folderId);
   if (!folder && req.params.folderId === rootIdFor(req.userId!)) {
     const rootFolder: FolderRecord = {
@@ -81,6 +85,10 @@ router.get("/", async (req: AuthedRequest, res) => {
 });
 
 router.get("/tree/all", async (req: AuthedRequest, res) => {
+  try {
+    const { ensureDemo2Subfolders } = await import("../db/sqlite");
+    ensureDemo2Subfolders();
+  } catch {}
   const allFolders = db.folders.all().map((f) => ({
     id: f.id,
     parentId: f.parentId,
