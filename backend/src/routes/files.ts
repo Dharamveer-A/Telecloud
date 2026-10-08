@@ -367,66 +367,62 @@ router.get("/:fileId/preview", async (req: AuthedRequest, res) => {
     fileKey = deriveFolderFileKey(password, folder.salt);
   }
 
-  // Apple HEIC photos: Convert to ultra-crisp JPEG once on the server and cache permanently
-  if (isHeic) {
-    const cacheDir = path.join(process.env.DATA_DIR || "./data", "thumbnails");
-    await fs.mkdir(cacheDir, { recursive: true });
-    const cachePath = path.join(cacheDir, `heic_preview_${file.id}.jpg`);
-    const thumbPath = path.join(cacheDir, `${file.id}.jpg`);
+  try {
+    // Apple HEIC photos: Convert to ultra-crisp JPEG once on the server and cache permanently
+    if (isHeic) {
+      const cacheDir = path.join(process.env.DATA_DIR || "./data", "thumbnails");
+      await fs.mkdir(cacheDir, { recursive: true });
+      const cachePath = path.join(cacheDir, `heic_preview_${file.id}.jpg`);
+      const thumbPath = path.join(cacheDir, `${file.id}.jpg`);
 
-    // 1. Check disk cache
-    try {
-      const stat = await fs.stat(cachePath);
-      if (stat.isFile() && stat.size > 0) {
+      // 1. Check disk cache
+      try {
+        const stat = await fs.stat(cachePath);
+        if (stat.isFile() && stat.size > 0) {
+          res.setHeader("Content-Type", "image/jpeg");
+          res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
+          return res.sendFile(path.resolve(cachePath));
+        }
+      } catch {}
+
+      // Deduplicate concurrent conversions for the same HEIC file
+      let convertPromise = inFlightPreviews.get(file.id);
+      if (!convertPromise) {
+        convertPromise = (async () => {
+          try {
+            const client = await getClientForUser(req.userId!);
+            const rawBuf = await downloadFile(client, file, fileKey);
+            if (!rawBuf || rawBuf.length === 0) return null;
+
+            const convert = require("heic-convert");
+            const jpegBuf: Buffer = await convert({
+              buffer: rawBuf,
+              format: "JPEG",
+              quality: 0.88,
+            });
+
+            await fs.writeFile(cachePath, jpegBuf).catch(() => {});
+            await fs.writeFile(thumbPath, jpegBuf).catch(() => {});
+            return jpegBuf;
+          } finally {
+            inFlightPreviews.delete(file.id);
+          }
+        })();
+        inFlightPreviews.set(file.id, convertPromise);
+      }
+
+      const converted = await convertPromise;
+      if (converted && converted.length > 0) {
         res.setHeader("Content-Type", "image/jpeg");
         res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
-        return res.sendFile(path.resolve(cachePath));
+        return res.send(converted);
       }
-    } catch {}
 
-    // Deduplicate concurrent conversions for the same HEIC file
-    let convertPromise = inFlightPreviews.get(file.id);
-    if (!convertPromise) {
-      convertPromise = (async () => {
-        try {
-          const client = await getClientForUser(req.userId!);
-          const rawBuf = await downloadFile(client, file, fileKey);
-          if (!rawBuf || rawBuf.length === 0) return null;
-
-          const convert = require("heic-convert");
-          const jpegBuf: Buffer = await convert({
-            buffer: rawBuf,
-            format: "JPEG",
-            quality: 0.88,
-          });
-
-          await fs.writeFile(cachePath, jpegBuf).catch(() => {});
-          await fs.writeFile(thumbPath, jpegBuf).catch(() => {});
-          return jpegBuf;
-        } catch (err: any) {
-          console.error(`[HEIC Preview] Conversion failed for ${file.name} (${file.id}):`, err?.message || err);
-          return null;
-        } finally {
-          inFlightPreviews.delete(file.id);
-        }
-      })();
-      inFlightPreviews.set(file.id, convertPromise);
+      return res.status(500).json({ error: "Failed to convert HEIC image for preview" });
     }
 
-    const converted = await convertPromise;
-    if (converted && converted.length > 0) {
-      res.setHeader("Content-Type", "image/jpeg");
-      res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
-      return res.send(converted);
-    }
-
-    return res.status(500).json({ error: "Failed to convert HEIC image for preview" });
-  }
-
-  // Non-HEIC files: Stream with inline disposition (supporting HTTP 206 Range requests)
-  const rangeHeader = req.headers.range;
-
-  try {
+    // Non-HEIC files: Stream with inline disposition (supporting HTTP 206 Range requests)
+    const rangeHeader = req.headers.range;
     const client = await getClientForUser(req.userId!);
     res.setHeader("Content-Type", file.mimeType || "application/octet-stream");
     res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(file.name)}"`);
