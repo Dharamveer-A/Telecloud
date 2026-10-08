@@ -394,15 +394,46 @@ router.get("/:fileId/preview", async (req: AuthedRequest, res) => {
             const rawBuf = await downloadFile(client, file, fileKey);
             if (!rawBuf || rawBuf.length === 0) return null;
 
-            const convert = require("heic-convert");
-            const jpegBuf: Buffer = await convert({
-              buffer: rawBuf,
-              format: "JPEG",
-              quality: 0.88,
-            });
+            let jpegBuf: Buffer | null = null;
+            const rawWorkerUrl = process.env.IMAGE_WORKER_URL?.trim();
 
-            await fs.writeFile(cachePath, jpegBuf).catch(() => {});
-            await fs.writeFile(thumbPath, jpegBuf).catch(() => {});
+            if (rawWorkerUrl) {
+              const targetUrl = rawWorkerUrl.endsWith("/api/convert")
+                ? rawWorkerUrl
+                : `${rawWorkerUrl.replace(/\/$/, "")}/api/convert`;
+              try {
+                console.log(`[Worker] Offloading HEIC conversion (${rawBuf.length} bytes) to worker: ${targetUrl}`);
+                const workerRes = await fetch(targetUrl, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/octet-stream" },
+                  body: rawBuf as unknown as BodyInit,
+                });
+                if (workerRes.ok) {
+                  const ab = await workerRes.arrayBuffer();
+                  jpegBuf = Buffer.from(ab);
+                  console.log(`[Worker] Successfully converted HEIC via worker (${jpegBuf.length} bytes)`);
+                } else {
+                  console.warn(`[Worker] Worker returned HTTP ${workerRes.status}, falling back to local converter`);
+                }
+              } catch (workerErr: any) {
+                console.warn("[Worker] Worker request failed, falling back to local converter:", workerErr?.message || workerErr);
+              }
+            }
+
+            // Local fallback if worker not configured or failed
+            if (!jpegBuf) {
+              const convert = require("heic-convert");
+              jpegBuf = await convert({
+                buffer: rawBuf,
+                format: "JPEG",
+                quality: 0.88,
+              });
+            }
+
+            if (jpegBuf) {
+              await fs.writeFile(cachePath, jpegBuf).catch(() => {});
+              await fs.writeFile(thumbPath, jpegBuf).catch(() => {});
+            }
             return jpegBuf;
           } finally {
             inFlightPreviews.delete(file.id);

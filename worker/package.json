@@ -1,0 +1,12 @@
+{
+  "name": "telecloud-media-worker",
+  "version": "1.0.0",
+  "description": "Stateless 1GB RAM media conversion worker for TeleCloud",
+  "main": "api/convert.js",
+  "scripts": {
+    "start": "node api/convert.js"
+  },
+  "dependencies": {
+    "heic-convert": "^2.1.0"
+  }
+}
