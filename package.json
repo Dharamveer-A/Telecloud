@@ -1,0 +1,13 @@
+{
+  "name": "telecloud",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TeleCloud — Personal Unlimited Cloud Drive",
+  "scripts": {
+    "dev": "node scripts/start-local.js",
+    "start": "node scripts/start-local.js",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "build": "cd backend && npm run build && cd ../frontend && npm run build"
+  }
+}
