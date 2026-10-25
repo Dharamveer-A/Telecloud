@@ -183,6 +183,7 @@ export default function PreviewModal({
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [textContent, setTextContent] = useState<string | null>(null);
   const [isTextLoading, setIsTextLoading] = useState(false);
+  const [isPdfLoading, setIsPdfLoading] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
 
   const handleRetry = useCallback(() => {
@@ -252,7 +253,8 @@ export default function PreviewModal({
     setError("");
     setTextContent(null);
     setBlobUrl(null);
-  }, [file.id]);
+    setIsPdfLoading(false);
+  }, [file.id, retryKey]);
 
   // Smart Preloading for next & previous images/thumbnails
   useEffect(() => {
@@ -313,10 +315,52 @@ export default function PreviewModal({
     };
   }, [file.id, isText, password]);
 
-  // For encrypted video/audio/pdf: fallback to blob URL
-  const needsBlobFetch = file.encrypted && (isVideo || isAudio || isPdf);
+  // For all PDF documents: fetch with auth and create typed Blob URL for robust inline viewing
   useEffect(() => {
-    if (!needsBlobFetch) return;
+    if (!isPdf) return;
+    let cancelled = false;
+    let revoked = "";
+    setIsPdfLoading(true);
+
+    (async () => {
+      try {
+        const streamUrl = api.fileUrl(file.id, password, true);
+        const res = await fetch(streamUrl, {
+          headers: { Authorization: `Bearer ${localStorage.getItem("telecloud_token")}` },
+        });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || `Failed to stream PDF document (${res.status})`);
+        }
+        const rawBlob = await res.blob();
+        if (cancelled) return;
+
+        // Force application/pdf MIME type on the blob so all browser PDF engines recognize it
+        const pdfBlob = new Blob([rawBlob], { type: "application/pdf" });
+        const url = URL.createObjectURL(pdfBlob);
+        revoked = url;
+        if (!cancelled) {
+          setBlobUrl(url);
+          setIsPdfLoading(false);
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          setError(err.message || "Failed to load PDF preview");
+          setIsPdfLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (revoked) URL.revokeObjectURL(revoked);
+    };
+  }, [file.id, isPdf, password, retryKey]);
+
+  // For encrypted video/audio: fallback to blob URL
+  const needsMediaBlobFetch = file.encrypted && (isVideo || isAudio);
+  useEffect(() => {
+    if (!needsMediaBlobFetch) return;
     let revoked = "";
     (async () => {
       try {
@@ -335,7 +379,7 @@ export default function PreviewModal({
     return () => {
       if (revoked) URL.revokeObjectURL(revoked);
     };
-  }, [file.id, needsBlobFetch, password]);
+  }, [file.id, needsMediaBlobFetch, password, retryKey]);
 
   // Direct streaming download URL with query token
   const directStreamUrl = api.fileUrl(file.id, password, true);
@@ -435,7 +479,7 @@ export default function PreviewModal({
           {/* Action buttons */}
           <div className="flex items-center gap-2 shrink-0">
             <a
-              href={needsBlobFetch ? blobUrl || directStreamUrl : directStreamUrl}
+              href={blobUrl || directStreamUrl}
               download={file.name}
               className="px-2.5 sm:px-3 py-1.5 bg-teal/15 hover:bg-teal/25 text-teal border border-teal/40 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors shadow-xs"
               title="Download file"
@@ -444,7 +488,7 @@ export default function PreviewModal({
               <span className="hidden sm:inline">Download</span>
             </a>
             <a
-              href={previewUrl}
+              href={blobUrl || previewUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="p-1.5 text-dim hover:text-paper hover:bg-surface2 rounded-lg transition-colors hidden sm:flex items-center justify-center"
@@ -665,23 +709,54 @@ export default function PreviewModal({
             </div>
           )}
 
-          {/* PDF PREVIEW: Direct iframe streaming */}
+          {/* PDF PREVIEW: Typed Object/Iframe with Loading Telemetry and Fallback */}
           {isPdf && !error && (
-            <div className="w-full h-[78vh] sm:h-[80vh] rounded-lg overflow-hidden border border-line bg-white shadow-2xl">
-              {needsBlobFetch ? (
-                blobUrl ? (
-                  <iframe src={blobUrl} className="w-full h-full border-0" title={file.name} />
-                ) : (
-                  <div className="flex flex-col items-center justify-center h-full bg-surface">
-                    <InterestingLoader
-                      type="encrypted"
-                      fileName={file.name}
-                      fileSize={file.size}
-                    />
-                  </div>
-                )
+            <div className="w-full h-[78vh] sm:h-[80vh] rounded-xl overflow-hidden border border-line bg-surface shadow-2xl relative flex flex-col">
+              {isPdfLoading || !blobUrl ? (
+                <div className="flex flex-col items-center justify-center h-full w-full bg-surface">
+                  <InterestingLoader
+                    type="pdf"
+                    fileName={file.name}
+                    fileSize={file.size}
+                  />
+                </div>
               ) : (
-                <iframe src={directStreamUrl} className="w-full h-full border-0" title={file.name} />
+                <object
+                  data={`${blobUrl}#toolbar=1&navpanes=1`}
+                  type="application/pdf"
+                  className="w-full h-full border-0 block"
+                >
+                  <iframe
+                    src={`${blobUrl}#toolbar=1`}
+                    className="w-full h-full border-0 block"
+                    title={file.name}
+                  >
+                    <div className="flex flex-col items-center justify-center h-full p-8 text-center bg-surface2 text-paper">
+                      <FileText className="w-16 h-16 text-teal mb-4 animate-bounce" />
+                      <h3 className="text-base font-bold mb-2">{file.name}</h3>
+                      <p className="text-xs text-dim mb-6 max-w-sm">
+                        Inline PDF preview is blocked or unsupported by your browser settings.
+                      </p>
+                      <div className="flex gap-3">
+                        <a
+                          href={blobUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-4 py-2 bg-teal text-ink font-bold rounded-lg text-xs flex items-center gap-2 hover:opacity-90 transition-opacity"
+                        >
+                          <ExternalLink className="w-4 h-4" /> Open in New Tab
+                        </a>
+                        <a
+                          href={blobUrl}
+                          download={file.name}
+                          className="px-4 py-2 bg-surface border border-line text-paper font-semibold rounded-lg text-xs flex items-center gap-2 hover:bg-surface/80 transition-colors"
+                        >
+                          <Download className="w-4 h-4" /> Download PDF
+                        </a>
+                      </div>
+                    </div>
+                  </iframe>
+                </object>
               )}
             </div>
           )}

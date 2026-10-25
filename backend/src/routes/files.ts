@@ -488,6 +488,9 @@ router.get("/:fileId/preview", async (req: AuthedRequest, res) => {
     }
 
     res.setHeader("Accept-Ranges", file.encrypted ? "none" : "bytes");
+    if (!file.encrypted && file.size) {
+      res.setHeader("Content-Length", file.size.toString());
+    }
     await streamFileToResponse(client, file, res, fileKey);
   } catch (err: any) {
     if (
@@ -561,6 +564,9 @@ router.get("/:fileId/download", async (req: AuthedRequest, res) => {
     }
 
     res.setHeader("Accept-Ranges", file.encrypted ? "none" : "bytes");
+    if (!file.encrypted && file.size) {
+      res.setHeader("Content-Length", file.size.toString());
+    }
     await streamFileToResponse(client, file, res, fileKey);
   } catch (err: any) {
     if (

@@ -530,6 +530,9 @@ publicSharesRouter.get("/:token/files/:fileId", async (req, res) => {
   }
 
   res.setHeader("Accept-Ranges", file.encrypted ? "none" : "bytes");
+  if (!file.encrypted && file.size) {
+    res.setHeader("Content-Length", file.size.toString());
+  }
   try {
     await streamFileToResponse(client, file, res, fileKey);
   } catch (err: any) {
